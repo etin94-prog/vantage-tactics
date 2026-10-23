@@ -1,6 +1,6 @@
 {
   "schema": "vantage-lab-v1",
-  "build": "db313b058d7d5819bdf165c5bbb1aed6b96d21d967af513387fa347a7e196bda",
+  "build": "32b1d30f4b931d7e0c152cab91c91d3b5f0a530761f82303aeff013e271b5a32",
   "label": "이동 취소 예시",
   "initial": {
     "version": 4,
