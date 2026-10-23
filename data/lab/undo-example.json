@@ -1,6 +1,6 @@
 {
   "schema": "vantage-lab-v1",
-  "build": "32b1d30f4b931d7e0c152cab91c91d3b5f0a530761f82303aeff013e271b5a32",
+  "build": "18f503cd5c45408ce4b50d55f2c3131d17068d147db18c63a0f1cf9c2eb772fc",
   "label": "이동 취소 예시",
   "initial": {
     "version": 4,
@@ -1447,10 +1447,5 @@
     }
   ],
   "finalHash": "bad106da",
-  "review": {
-    "reviewer": "fixture",
-    "expected": "위치·방향 복원",
-    "actual": "동일 상태 확인",
-    "evidence": "구현 회귀 검사 예시"
-  }
+  "review": {}
 }

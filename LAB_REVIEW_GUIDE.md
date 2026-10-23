@@ -34,7 +34,7 @@ npm run lab:replay -- "경로/실험.json"
 
 검증 키트는 아래 실험·테스트·빌드 명령에 필요한 소스 묶음입니다. 원본 숫자 재추출 및 이전 GDD 동기화 자료 전체는 포함하지 않습니다.
 
-`npm run build`는 게임·실험실 단독 HTML을 함께 생성합니다. `npm run build:lab`은 실험실만 생성합니다. `npm run lab:kit`은 검증 키트 ZIP을 만듭니다. 키트 생성 전 빌드가 최신인지 검사합니다.
+`npm run build`는 게임·실험실 HTML과 공용 `assets/reference-media.js`을 함께 생성합니다. `npm run build:lab`은 실험실만 생성합니다. `npm run lab:kit`은 검증 키트 ZIP을 만듭니다. 키트 생성 전 빌드가 최신인지 검사합니다. HTML만 따로 옮기지 말고 `assets` 폴더도 함께 옮기세요. 키트에 변환된 도트·음원이 포함되며, 원본 실행 파일·DAT는 포함되지 않습니다.
 
 ## 근거와 결과의 기준
 

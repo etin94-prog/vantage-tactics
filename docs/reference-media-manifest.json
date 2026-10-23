@@ -1,0 +1,231 @@
+{
+  "source": "User-supplied VMO_WIN",
+  "sha256": {
+    "DATA00.DAT": "b0998062486a84d796e890dab72989c9b3398098b9cb9b7ffdc39d2853163860",
+    "DATA01.DAT": "45bb7b793170e096d8c2f00c41553090474565ea7810493b24cdfb65533a8376",
+    "DATA02.DAT": "b7f6e08eaa63f28eee14f5a3ea835987caa9df76ea489b6fde15406fc42f3e91",
+    "DATA03.DAT": "f0973f4a35e03239c257d53e75f97fca75c5c46efa938316b37b32cde94c6f40",
+    "DATA13.DAT": "dd8ca297f9c553b8eab2b270d91b787439841c64670b6bd3f544a7e4924d855a"
+  },
+  "characters": 51,
+  "teams": 2,
+  "framesPerTeam": 54,
+  "midiTracks": 19,
+  "effects": 7,
+  "bytes": 5079284,
+  "slotMapping": {
+    "fighter": [
+      0,
+      1
+    ],
+    "duke": [
+      2,
+      3
+    ],
+    "swordsman": [
+      4,
+      5
+    ],
+    "knight": [
+      6,
+      7
+    ],
+    "paladin": [
+      8,
+      9
+    ],
+    "shadow": [
+      10,
+      11
+    ],
+    "ranger": [
+      12,
+      13
+    ],
+    "savage": [
+      14,
+      15
+    ],
+    "thief": [
+      16,
+      17
+    ],
+    "bard": [
+      18,
+      19
+    ],
+    "sister": [
+      20,
+      21
+    ],
+    "sorcerer": [
+      22,
+      23
+    ],
+    "witch": [
+      24,
+      25
+    ],
+    "monk": [
+      26,
+      27
+    ],
+    "spirit": [
+      28,
+      29
+    ],
+    "beast": [
+      30,
+      31
+    ],
+    "nightmare": [
+      32,
+      33
+    ],
+    "fraulein": [
+      34,
+      35
+    ],
+    "dora": [
+      36,
+      183
+    ],
+    "ares": [
+      37,
+      184
+    ],
+    "mail": [
+      38,
+      185
+    ],
+    "gau": [
+      39,
+      186
+    ],
+    "julio-chris": [
+      40,
+      187
+    ],
+    "clare": [
+      41,
+      188
+    ],
+    "adol": [
+      42,
+      189
+    ],
+    "leah-feena": [
+      43,
+      190
+    ],
+    "chewchew": [
+      44,
+      191
+    ],
+    "fa-rancell": [
+      45,
+      46
+    ],
+    "da-colm": [
+      47,
+      48
+    ],
+    "ae-ferrion": [
+      49,
+      50
+    ],
+    "gia-bro": [
+      51,
+      52
+    ],
+    "d-alma": [
+      53,
+      54
+    ],
+    "ba-mado": [
+      55,
+      56
+    ],
+    "reque": [
+      57,
+      58
+    ],
+    "neptjunoue": [
+      59,
+      60
+    ],
+    "tarbss": [
+      61,
+      62
+    ],
+    "zamilpen": [
+      63,
+      64
+    ],
+    "marme": [
+      65,
+      66
+    ],
+    "tentarch": [
+      67,
+      68
+    ],
+    "hepitus": [
+      69,
+      70
+    ],
+    "oonevievle": [
+      71,
+      72
+    ],
+    "blexe": [
+      73,
+      74
+    ],
+    "dullmdaler": [
+      75,
+      76
+    ],
+    "zenosblead": [
+      77,
+      78
+    ],
+    "greon": [
+      79,
+      80
+    ],
+    "pelitt": [
+      81,
+      82
+    ],
+    "currier-bell": [
+      83,
+      84
+    ],
+    "amoltamiss": [
+      85,
+      86
+    ],
+    "guene-foss": [
+      87,
+      88
+    ],
+    "fifenall": [
+      89,
+      90
+    ],
+    "regna-croxe": [
+      91,
+      92
+    ]
+  },
+  "limitations": [
+    "Runtime glow palette reconstructed",
+    "Natial cast uses own idle stance until DATA03 mapping is verified",
+    "Projectile-only attack frames composite idle actor",
+    "Direction/action timing provisional",
+    "Web event-to-SFX mapping provisional",
+    "Web stage-to-MIDI mapping provisional",
+    "MIDI instrument timbres synthesized by Web Audio; continuous pitch/controller changes approximated"
+  ]
+}
