@@ -1,0 +1,15 @@
+{
+  "id": "./",
+  "name": "Vantage Tactics · 소환사의 여정",
+  "short_name": "Vantage Tactics",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#14251f",
+  "theme_color": "#182b23",
+  "icons": [
+    {"src":"assets/app-icon-192.png","sizes":"192x192","type":"image/png"},
+    {"src":"assets/app-icon-512.png","sizes":"512x512","type":"image/png"}
+  ]
+}
