@@ -876,7 +876,13 @@ const TONE_KEYS=['brightness','warmth','reverb','brass','drums','synth'];
 const toneValues=value=>Object.fromEntries(TONE_KEYS.map(k=>[k,value[k]]));
 const AUDIO_PRESETS={tactics:{label:'편안한 전술',values:toneValues(DEFAULT_TUNING)},battle:{label:'선명한 전투',values:toneValues({...DEFAULT_TUNING,brightness:5800,warmth:0,reverb:.1,brass:.8,drums:.7})},night:{label:'부드러운 밤',values:toneValues({...DEFAULT_TUNING,brightness:2800,warmth:2,reverb:.25,brass:.45,drums:.35,synth:.45})}};
 function matchingPreset(value){return Object.entries(AUDIO_PRESETS).find(([,p])=>TONE_KEYS.every(k=>Math.abs(value[k]-p.values[k])<1e-6))?.[0]||'';}
-const SFX_TRIM_DB={turn:-16,summon:-14,capture:-10,attack:-10,spell:-8,heal:-10,down:-4};
+const SFX_TRIM_DB={turn:-16,summon:-14,capture:-10,attack:-6,spell:-8,heal:-10,down:-4};
+// Physical hits (including counters and blocked hits) sound at contact, not wind-up.
+function presentationSound(event){
+  if(event.type==='attack')return null;
+  if(event.type==='damage')return ['공격','반격'].includes(event.kind)?'attack':null;
+  return event.type;
+}
 const BGM_MAKEUP=14;
 const AUDIO_MIX_VERSION=2;
 function migrateAudioPreferences(value){if(value.audioMixVersion===AUDIO_MIX_VERSION)return {...value};const next={...value,audioMixVersion:AUDIO_MIX_VERSION};
@@ -898,14 +904,14 @@ const SYNTH_PROFILES={
   drums:{harmonics:[1,.2,.03],attack:.005,decay:.1,sustain:.08,release:.08,level:.06,cutoff:3000}
 };
 class GameAudio {
-  constructor(onStatus=()=>{}){this.onStatus=onStatus;this.onEffectError=()=>{};this.decodeFailures=new Map();this.voiceGains=new Map();this.enabled=false;this.generation=0;this.trackId=chooseTrack(1);this.bgmVolume=.35;this.sfxVolume=.55;this.cache=new Map();this.buffers=new Map();this.voices=new Set();this.effects=new Set();this.lastEffects=new Map();this.tunings={};this.tuning=sanitizeTuning();this.autoGain=1;this.waves=new Map();}
+  constructor(onStatus=()=>{}){this.onStatus=onStatus;this.onEffectError=()=>{};this.decodeFailures=new Map();this.voiceGains=new Map();this.enabled=false;this.generation=0;this.effectGeneration=0;this.trackId=chooseTrack(1);this.bgmVolume=.35;this.sfxVolume=.55;this.cache=new Map();this.buffers=new Map();this.voices=new Set();this.effects=new Set();this.lastEffects=new Map();this.tunings={};this.tuning=sanitizeTuning();this.autoGain=1;this.waves=new Map();}
   async track(id){if(this.cache.has(id))return this.cache.get(id);const data=REFERENCE_MEDIA.tracks.find(t=>t.id===id);if(!data)throw new Error('음악을 찾을 수 없습니다.');const bytes=Uint8Array.from(atob(data.gzip),c=>c.charCodeAt(0));const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));const result=parseMidi(await new Response(stream).arrayBuffer());this.cache.set(id,result);return result;}
   context(supplied){if(!this.ctx){const Audio=globalThis.AudioContext||globalThis.webkitAudioContext;if(!supplied&&!Audio)throw new Error('이 브라우저는 오디오를 지원하지 않습니다.');const c=this.ctx=supplied||new Audio();this.master=c.createDynamicsCompressor();this.master.threshold.value=-3;this.master.knee.value=0;this.master.ratio.value=20;this.master.attack.value=.003;this.master.release.value=.18;this.output=c.createGain();this.output.gain.value=.8;this.master.connect(this.output).connect(c.destination);
     this.music=c.createGain();this.music.gain.value=this.bgmVolume*BGM_MAKEUP;this.music.connect(this.master);this.fx=c.createGain();this.fx.gain.value=this.sfxVolume;this.fx.connect(this.master);
     this.bgmBus=c.createGain();this.bgmTone=c.createBiquadFilter();this.bgmTone.type='lowpass';this.bgmTone.Q.value=.55;this.bgmWarmth=c.createBiquadFilter();this.bgmWarmth.type='lowshelf';this.bgmWarmth.frequency.value=220;this.bgmCompressor=c.createDynamicsCompressor();this.bgmCompressor.threshold.value=-18;this.bgmCompressor.knee.value=12;this.bgmCompressor.ratio.value=2.5;this.bgmCompressor.attack.value=.025;this.bgmCompressor.release.value=.22;
     this.bgmLowCut=c.createBiquadFilter();this.bgmLowCut.type='highpass';this.bgmLowCut.frequency.value=85;this.bgmLowCut.Q.value=.55;this.bgmBus.connect(this.bgmLowCut).connect(this.bgmWarmth).connect(this.bgmTone).connect(this.bgmCompressor);this.dry=c.createGain();this.wet=c.createGain();this.bgmCompressor.connect(this.dry).connect(this.music);this.reverb=c.createConvolver();this.bgmCompressor.connect(this.wet).connect(this.reverb).connect(this.music);
     let seed=173;const random=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296*2-1;};this.noise=c.createBuffer(1,c.sampleRate,c.sampleRate);const noise=this.noise.getChannelData(0);for(let i=0;i<noise.length;i++)noise[i]=random();
-    const impulse=c.createBuffer(2,Math.floor(c.sampleRate*.9),c.sampleRate);for(let ch=0;ch<2;ch++){const data=impulse.getChannelData(ch);let smooth=0;for(let i=0;i<data.length;i++){smooth=.65*smooth+.35*random();data[i]=i<c.sampleRate*.015?0:smooth*(1-i/data.length)**3;}}this.reverb.buffer=impulse;c.onstatechange=()=>{if(this.enabled&&c.state==='interrupted')this.onStatus('오디오 일시 중단 · 화면 복귀 후 소리 켜기를 다시 눌러 주세요.');};this.applyMix();}return this.ctx;}
+    const impulse=c.createBuffer(2,Math.floor(c.sampleRate*.9),c.sampleRate);for(let ch=0;ch<2;ch++){const data=impulse.getChannelData(ch);let smooth=0;for(let i=0;i<data.length;i++){smooth=.65*smooth+.35*random();data[i]=i<c.sampleRate*.015?0:smooth*(1-i/data.length)**3;}}this.reverb.buffer=impulse;c.onstatechange=()=>{if(this.enabled&&c.state==='interrupted')this.onStatus('소리 켜짐 · 오디오 일시 중단, 화면을 터치하면 재개합니다.');};this.applyMix();}return this.ctx;}
   loadTunings(value){this.tunings={};if(value&&typeof value==='object')for(const {id} of AUDIO_TRACKS)if(value[id])this.tunings[id]=sanitizeTuning(value[id]);this.tuning=this.getTuning();this.applyMix();}
   getTuning(id=this.trackId){return sanitizeTuning(this.tunings[id]);}
   tune(value,all=false){const next=sanitizeTuning({...this.getTuning(),...value}),oldTempo=this.tuning.tempo;if(all)for(const {id} of AUDIO_TRACKS)this.tunings[id]={...next};else this.tunings[this.trackId]={...next};this.tuning=next;
@@ -917,9 +923,29 @@ class GameAudio {
   volumes(bgm,sfx){this.bgmVolume=Math.max(0,Math.min(1,Number(bgm)||0));this.sfxVolume=Math.max(0,Math.min(1,Number(sfx)||0));if(this.ctx){this.music.gain.setTargetAtTime(this.bgmVolume*BGM_MAKEUP,this.ctx.currentTime,.02);this.fx.gain.setTargetAtTime(this.sfxVolume,this.ctx.currentTime,.02);}}
   stopMusic(fade=.03){clearInterval(this.timer);this.timer=null;const now=this.ctx?.currentTime||0;for(const source of this.voices){try{const gain=this.voiceGains.get(source);if(gain){gain.cancelAndHoldAtTime(now);gain.linearRampToValueAtTime(0,now+fade);}source.stop(now+fade);}catch{}}this.voices.clear();}
 
-  async enable(){clearTimeout(this.suspendTimer);if(this.enabled)return;this.enabled=true;this.decodeFailures.clear();this.onStatus('음악 불러오는 중');try{await this.context().resume();if(!this.enabled)return;await this.select(this.trackId);if(this.enabled&&globalThis.document?.hidden)await this.ctx.suspend();}catch(error){this.disable();this.onStatus(error.message);throw error;}}
-  disable(){this.enabled=false;this.generation++;this.stopMusic();for(const source of this.effects){try{source.stop();}catch{}}this.effects.clear();const token=this.generation;this.suspendTimer=setTimeout(()=>{if(!this.enabled&&token===this.generation)this.ctx?.suspend().catch(()=>{});},40);this.onStatus('소리 꺼짐');}
-  async select(id){if(!AUDIO_TRACKS.some(t=>t.id===id))return;this.trackId=id;this.tuning=this.getTuning(id);this.applyMix();const generation=++this.generation;this.stopMusic();if(!this.enabled)return;try{const song=await this.track(id);if(!this.enabled||generation!==this.generation)return;this.song=song;this.autoGain=scoreHeadroom(song);this.applyMix();this.cursor=0;this.epoch=this.ctx.currentTime+.12-(song.notes[0]?.[0]||0)/this.tuning.tempo;this.timer=setInterval(()=>this.schedule(),50);this.schedule();this.onStatus(`${AUDIO_TRACKS.find(t=>t.id===id).label} 재생 중`);}catch(error){if(generation!==this.generation)return;this.disable();this.onStatus(error.message);throw error;}}
+  async enable(){clearTimeout(this.suspendTimer);this.enabled=true;this.decodeFailures.clear();return this.resume(true);}
+  async resume(fromGesture=false){
+    if(!this.enabled||globalThis.document?.hidden)return;
+    // Some mobile browsers keep a non-gesture resume pending until a fresh gesture.
+    if(this.resumePending){if(fromGesture)await this.context().resume();return this.resumePending;}
+    const task=(async()=>{try{
+      await this.context().resume();
+      if(!this.enabled)return;
+      if(globalThis.document?.hidden){await this.ctx.suspend();return;}
+      if(this.ctx.state!=='running')throw new Error('오디오 재개 대기');
+      if(!this.timer||this.songId!==this.trackId)await this.select(this.trackId);
+      else this.onStatus(`${AUDIO_TRACKS.find(t=>t.id===this.songId)?.label||'음악'} 재생 중`);
+    }catch(error){if(this.enabled)this.onStatus('소리 켜짐 · 재생 대기 중, 화면을 터치하면 다시 시도합니다.');throw error;}})();
+    this.resumePending=task;
+    try{return await task;}finally{if(this.resumePending===task)this.resumePending=null;}
+  }
+  disable(){this.enabled=false;this.generation++;this.effectGeneration++;this.stopMusic();for(const source of this.effects){try{source.stop();}catch{}}this.effects.clear();const token=this.generation;this.suspendTimer=setTimeout(()=>{if(!this.enabled&&token===this.generation)this.ctx?.suspend().catch(()=>{});},40);this.onStatus('소리 꺼짐');}
+  async select(id){if(!AUDIO_TRACKS.some(t=>t.id===id))return;this.trackId=id;const generation=++this.generation;
+    if(!this.enabled||!this.ctx){this.tuning=this.getTuning(id);this.applyMix();return;}
+    if(this.songId===id&&this.timer)return;
+    try{const song=await this.track(id);if(!this.enabled||generation!==this.generation)return;
+      this.stopMusic();this.song=song;this.songId=id;this.tuning=this.getTuning(id);this.autoGain=scoreHeadroom(song);this.applyMix();this.cursor=0;this.epoch=this.ctx.currentTime+.12-(song.notes[0]?.[0]||0)/this.tuning.tempo;this.timer=setInterval(()=>this.schedule(),50);this.schedule();this.onStatus(`${AUDIO_TRACKS.find(t=>t.id===id).label} 재생 중`);
+    }catch(error){if(generation!==this.generation)return;this.onStatus('곡을 불러오지 못했습니다 · 소리 설정은 유지됩니다.');throw error;}}
   schedule(){if(!this.enabled||this.ctx.state!=='running'||!this.song)return;const until=this.ctx.currentTime+.18;let budget=256;while(budget-->0){if(this.cursor>=this.song.notes.length){if(this.epoch+this.song.duration/this.tuning.tempo>until)break;this.epoch+=this.song.duration/this.tuning.tempo;this.cursor=0;if(!this.song.notes.length)break;}const note=this.song.notes[this.cursor];if(!note||this.epoch+note[0]/this.tuning.tempo>until)break;const at=this.epoch+note[0]/this.tuning.tempo;if(at>=this.ctx.currentTime-.05)this.note(note,Math.max(at,this.ctx.currentTime));this.cursor++;}}
   note(n,at){
     if(this.voices.size>=64)return;
@@ -939,12 +965,12 @@ class GameAudio {
     expression.gain.setValueAtTime(n[7]?.gain[0][1]??1,at);if(n[7])for(const [offset,value] of n[7].gain.slice(1)){if(offset/this.tuning.tempo<=length)expression.gain.setTargetAtTime(value,at+offset/this.tuning.tempo,.02);}
     source.connect(filter).connect(g).connect(expression).connect(panNode).connect(this.groupBus(group));this.voiceGains.set(source,g.gain);source.onended=()=>{this.voices.delete(source);source.disconnect();filter.disconnect();g.disconnect();expression.disconnect();panNode.disconnect();this.voiceGains.delete(source);};this.voices.add(source);source.start(at);source.stop(at+length+release+.01);
   }
-  async effect(event){if(!this.enabled||!REFERENCE_MEDIA.sfx[event]||this.ctx?.state!=='running'||(this.decodeFailures.get(event)||0)>=3)return;const generation=this.generation,now=this.ctx.currentTime;if(now-(this.lastEffects.get(event)??-1)<(event==='turn'?.3:.08))return;this.lastEffects.set(event,now);
+  async effect(event){if(!this.enabled||!REFERENCE_MEDIA.sfx[event]||this.ctx?.state!=='running'||(this.decodeFailures.get(event)||0)>=3)return;const generation=this.effectGeneration,now=this.ctx.currentTime;if(now-(this.lastEffects.get(event)??-1)<(event==='turn'?.3:.08))return;this.lastEffects.set(event,now);
     let pending;
-    try{if(!this.buffers.has(event)){const bytes=Uint8Array.from(atob(REFERENCE_MEDIA.sfx[event].split(',')[1]),c=>c.charCodeAt(0));this.buffers.set(event,this.ctx.decodeAudioData(bytes.buffer));}pending=this.buffers.get(event);const buffer=await pending;this.decodeFailures.delete(event);if(!this.enabled||generation!==this.generation||this.ctx.state!=='running'||this.effects.size>=8)return;
+    try{if(!this.buffers.has(event)){const bytes=Uint8Array.from(atob(REFERENCE_MEDIA.sfx[event].split(',')[1]),c=>c.charCodeAt(0));this.buffers.set(event,this.ctx.decodeAudioData(bytes.buffer));}pending=this.buffers.get(event);const buffer=await pending;this.decodeFailures.delete(event);if(!this.enabled||generation!==this.effectGeneration||this.ctx.state!=='running'||this.effects.size>=8)return;
       const source=this.ctx.createBufferSource();source.buffer=buffer;const trim=this.ctx.createGain();trim.gain.value=10**((SFX_TRIM_DB[event]??-10)/20);source.connect(trim);trim.connect(this.fx);this.effects.add(source);source.onended=()=>{this.effects.delete(source);source.disconnect();trim.disconnect();};source.start();
     }catch{if(this.buffers.get(event)===pending){this.buffers.delete(event);this.decodeFailures.set(event,(this.decodeFailures.get(event)||0)+1);}this.onEffectError((this.decodeFailures.get(event)||0)>=3?'효과음 로딩 실패 · 소리를 껐다 켜면 재시도합니다.':'효과음 로딩 실패 · 다음 요청에서 재시도합니다.');}}
-  async visibility(hidden){if(!this.enabled||!this.ctx)return;try{if(hidden){await this.ctx.suspend();this.onStatus('음악 일시 정지');}else{await this.ctx.resume();if(this.ctx.state!=='running')throw new Error('오디오 재개 실패');this.onStatus(`${AUDIO_TRACKS.find(t=>t.id===this.trackId)?.label||'음악'} 재생 중`);}}catch(error){this.disable();this.onStatus('오디오 재개 실패 · 소리 켜기를 다시 눌러 주세요.');throw error;}}
+  async visibility(hidden){if(!this.enabled||!this.ctx)return;if(hidden){await this.ctx.suspend();if(this.enabled)this.onStatus('소리 켜짐 · 화면 복귀 시 재생');}else await this.resume();}
 }
 
 class GameHaptics {
@@ -1049,14 +1075,25 @@ const dialog=$('#main-dialog'),content=$('#dialog-content');
 const mobileUI=initMobileUI({onClose(){flushResult();scheduleAI();}});
 initFullscreen();
 const haptics=new GameHaptics({enabled:preferences.haptics!==false});
-let audioStatus='소리 꺼짐';
+let audioStatus=preferences.soundEnabled===true?'소리 켜짐 · 화면을 터치하면 재생합니다.':'소리 꺼짐';
 const gameAudio=new GameAudio(message=>{audioStatus=message;const status=$('#audio-status');if(status)status.textContent=message;syncSoundButton();});
+gameAudio.enabled=preferences.soundEnabled===true;
 gameAudio.volumes(preferences.bgmVolume??.35,preferences.sfxVolume??.55);
 gameAudio.loadTunings(preferences.audioTunings);
 gameAudio.onEffectError=message=>toast(message);
 function syncSoundButton(){const on=gameAudio.enabled;$('#sound-btn').setAttribute('aria-pressed',String(on));$('#sound-btn').setAttribute('aria-label',on?'소리 끄기':'소리 켜기');$('#sound-btn').classList.toggle('active',on);const toggle=$('#audio-toggle');if(toggle)toggle.textContent=on?'소리 끄기':'소리 켜기';}
-function soundEvent(type){void gameAudio.effect(type);}
-async function setSound(){try{if(gameAudio.enabled)gameAudio.disable();else{gameAudio.trackId=preferences.bgmTrack||chooseTrack(battle?.stage.id);await gameAudio.enable();}}catch(error){toast(error.message);}syncSoundButton();}
+function soundEvent(type){if(type)void gameAudio.effect(type);}
+async function setSound(){
+  preferences.soundEnabled=!gameAudio.enabled;write('preferences',preferences);
+  try{if(!preferences.soundEnabled)gameAudio.disable();else{gameAudio.trackId=preferences.bgmTrack||chooseTrack(battle?.stage.id);await gameAudio.enable();}}catch{toast(audioStatus);}syncSoundButton();
+}
+function resumeSoundOnInteraction(event){
+  if(!gameAudio.enabled||event.target.closest?.('#sound-btn, #audio-toggle'))return;
+  if(gameAudio.ctx?.state!=='running'||!gameAudio.timer||gameAudio.songId!==gameAudio.trackId)void gameAudio.resume(true).catch(()=>{});
+}
+document.addEventListener('pointerup',resumeSoundOnInteraction,true);
+document.addEventListener('keydown',resumeSoundOnInteraction,true);
+syncSoundButton();
 function renderAudioTuning(){
   const root=$('#audio-tuning');if(!root)return;const t=gameAudio.getTuning(),track=AUDIO_TRACKS.find(x=>x.id===gameAudio.trackId);
   const sliders=[['brightness','음색 밝기',1200,8500,100,'Hz'],['warmth','저음 온기',-4,4,.5,'dB'],['reverb','공간감',0,.4,.01,'%'],['tempo','재생 속도',.75,1.25,.01,'%'],['gain','곡 음량 보정',0,1.5,.01,'%']];
@@ -1071,21 +1108,21 @@ function renderAudioTuning(){
 }
 function showAudioSettings(){
   gameAudio.trackId=preferences.bgmTrack||chooseTrack(battle?.stage.id);
-  showModal(`${modalHead('음악 · 효과음 · 진동','제공된 게임의 MIDI · WAV · 캐릭터 도트를 사용합니다.','SOUND & ORIGINAL ART')}<div class="modal-body audio-settings"><p id="audio-status" role="status">${esc(audioStatus)}</p><button class="primary" id="audio-toggle">${gameAudio.enabled?'소리 끄기':'소리 켜기'}</button><label for="bgm-track">배경 음악</label><select id="bgm-track"><option value="auto">전장별 자동 선택</option>${AUDIO_TRACKS.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</select><label for="bgm-volume">BGM 음량 <output id="bgm-value">${Math.round(gameAudio.bgmVolume*100)}%</output></label><input id="bgm-volume" type="range" min="0" max="100" value="${Math.round(gameAudio.bgmVolume*100)}"><label for="sfx-volume">효과음 음량 <output id="sfx-value">${Math.round(gameAudio.sfxVolume*100)}%</output></label><input id="sfx-volume" type="range" min="0" max="100" value="${Math.round(gameAudio.sfxVolume*100)}"><label for="sfx-choice">효과음 종류</label><select id="sfx-choice"><option value="capture">마석 점령</option><option value="turn">아군 턴</option><option value="summon">소환</option><option value="attack">공격</option><option value="spell">마법</option><option value="heal">회복</option><option value="down">전투 불능</option></select><button class="secondary" id="sfx-preview">효과음 미리 듣기</button><section class="haptic-settings"><label><input id="haptics-toggle" type="checkbox" ${haptics.enabled?'checked':''} ${haptics.supported?'':'disabled'}> 타격 진동</label><small id="haptics-status" role="status">${haptics.supported?'피해를 입힐 때 짧게 진동합니다. 기기 설정에 따라 울리지 않을 수 있습니다.':'이 브라우저는 게임 진동을 지원하지 않습니다.'}</small><button class="secondary" id="haptics-preview" ${haptics.supported?'':'disabled'}>진동 테스트</button></section><section id="audio-tuning" class="audio-tuning"></section><p class="audio-note">원본 MIDI 19곡 · 효과음 7개 · 마스터 27명과 정령 24종<br>음표·템포는 원본 MIDI, 악기 음색은 브라우저 합성입니다. 전장별 곡과 상황별 효과음의 연결은 임시 배정입니다. 일부 발광색도 웹용으로 재구성했습니다.<br>Vantage Master V2 / Nihon Falcom. 원본 맵 배경 타일과 모든 연출을 복원한 상태는 아닙니다.</p></div>`);
+  showModal(`${modalHead('음악 · 효과음 · 진동','제공된 게임의 MIDI · WAV · 캐릭터 도트를 사용합니다.','SOUND & ORIGINAL ART')}<div class="modal-body audio-settings"><p id="audio-status" role="status">${esc(audioStatus)}</p><button class="primary" id="audio-toggle">${gameAudio.enabled?'소리 끄기':'소리 켜기'}</button><label for="bgm-track">배경 음악</label><select id="bgm-track"><option value="auto">전장별 자동 선택</option>${AUDIO_TRACKS.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</select><label for="bgm-volume">BGM 음량 <output id="bgm-value">${Math.round(gameAudio.bgmVolume*100)}%</output></label><input id="bgm-volume" type="range" min="0" max="100" value="${Math.round(gameAudio.bgmVolume*100)}"><label for="sfx-volume">효과음 음량 <output id="sfx-value">${Math.round(gameAudio.sfxVolume*100)}%</output></label><input id="sfx-volume" type="range" min="0" max="100" value="${Math.round(gameAudio.sfxVolume*100)}"><label for="sfx-choice">효과음 종류</label><select id="sfx-choice"><option value="capture">마석 점령</option><option value="turn">아군 턴</option><option value="summon">소환</option><option value="attack">타격 · 반격</option><option value="spell">마법</option><option value="heal">회복</option><option value="down">전투 불능</option></select><button class="secondary" id="sfx-preview">효과음 미리 듣기</button><section class="haptic-settings"><label><input id="haptics-toggle" type="checkbox" ${haptics.enabled?'checked':''} ${haptics.supported?'':'disabled'}> 타격 진동</label><small id="haptics-status" role="status">${haptics.supported?'피해를 입힐 때 짧게 진동합니다. 기기 설정에 따라 울리지 않을 수 있습니다.':'이 브라우저는 게임 진동을 지원하지 않습니다.'}</small><button class="secondary" id="haptics-preview" ${haptics.supported?'':'disabled'}>진동 테스트</button></section><section id="audio-tuning" class="audio-tuning"></section><p class="audio-note">원본 MIDI 19곡 · 효과음 7개 · 마스터 27명과 정령 24종<br>음표·템포는 원본 MIDI, 악기 음색은 브라우저 합성입니다. 전장별 곡과 상황별 효과음의 연결은 임시 배정입니다. 일부 발광색도 웹용으로 재구성했습니다.<br>Vantage Master V2 / Nihon Falcom. 원본 맵 배경 타일과 모든 연출을 복원한 상태는 아닙니다.</p></div>`);
   $('#haptics-toggle').onchange=e=>{haptics.setEnabled(e.target.checked);preferences.haptics=haptics.enabled;write('preferences',preferences);$('#haptics-status').textContent=haptics.enabled?'타격 진동을 켰습니다.':'타격 진동을 껐습니다.';};$('#haptics-preview').onclick=()=>{$('#haptics-status').textContent=!haptics.enabled?'타격 진동을 먼저 켜 주세요.':haptics.pulse(30)?'짧은 진동을 요청했습니다. 실제 진동 여부는 기기 설정에 따라 다릅니다.':'기기 또는 브라우저에서 진동을 허용하지 않았습니다.';};
   $('#bgm-track').value=preferences.bgmTrack||'auto';$('#audio-toggle').onclick=setSound;
   $('#bgm-track').onchange=async e=>{preferences.bgmTrack=e.target.value==='auto'?null:e.target.value;write('preferences',preferences);try{await gameAudio.select(preferences.bgmTrack||chooseTrack(battle?.stage.id));renderAudioTuning();}catch(error){toast(error.message);}};
   for(const type of ['bgm','sfx'])$('#'+type+'-volume').oninput=()=>{const bgm=Number($('#bgm-volume').value)/100,sfx=Number($('#sfx-volume').value)/100;gameAudio.volumes(bgm,sfx);preferences.bgmVolume=bgm;preferences.sfxVolume=sfx;$('#bgm-value').textContent=Math.round(bgm*100)+'%';$('#sfx-value').textContent=Math.round(sfx*100)+'%';write('preferences',preferences);};
   $('#sfx-preview').onclick=async()=>{if(!gameAudio.enabled)await setSound();soundEvent($('#sfx-choice').value);};renderAudioTuning();
 }
-document.addEventListener('visibilitychange',()=>{if(document.hidden){haptics.cancel();clearTimeout(aiTimer);aiTimer=null;}else scheduleAI();gameAudio.visibility(document.hidden).catch(()=>{gameAudio.disable();toast('소리 켜기를 다시 눌러 주세요.');});});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){haptics.cancel();clearTimeout(aiTimer);aiTimer=null;}else scheduleAI();gameAudio.visibility(document.hidden).catch(()=>{});});
 function toast(message){$('#toast').textContent=message;$('#toast').classList.remove('hidden');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.add('hidden'),3300);}
 const renderer=new Renderer($('#battle-canvas'),{click:onTile,hover:onHover,effect:presentEffect,complete(){renderActions();renderUnit();scheduleAI();}});
 renderer.setSpeed(speed);
 let combatHits=[];
 function presentEffect(e,timely){
   if(e.type==='damage'){combatHits.push(e);renderCombatReport(combatHits);renderUnit();}
-  if(timely){haptics.impact(e);if(e.type!=='damage')soundEvent(e.type);}
+  if(timely){haptics.impact(e);soundEvent(presentationSound(e));}
 }
 let combatHoldUntil=0;
 let aimedTile=null,hoveredTile=null,areaModel=null;
@@ -1217,6 +1254,7 @@ $('#target-cancel').onclick=()=>{clearAim();highlights();};
 window.addEventListener('beforeunload',()=>save());
 let recovered=false;const saved=read('save',null);if(saved){try{battle=Battle.restore(saved);battle.custom=custom;for(const u of battle.units){const base=(u.master||u.isDecoy?[...MASTERS,...BOSSES]:SUMMONS).find(d=>d.id===u.type);u.name=custom[u.type]?.name||(u.master&&u.team===1?battle.stage.enemyMasterStart.name:null)||base.name;u.color=custom[u.type]?.color||base.color;u.sprite=custom[u.type]?.sprite;u.animation=custom[u.type]?.animation;}masterId=battle.units.find(u=>u.team===0&&u.master)?.type||masterId;selectedStage=Math.max(0,(battle.stage.id||1)-1);renderer.setBattle(battle);selectedId=battle.activeId;update();scheduleAI();recovered=true;}catch(e){console.warn('Saved battle could not be restored:',e.message);}}
 if(!recovered){start();if(!preferences.started)showMasterSelection();}
+if(preferences.soundEnabled===true){gameAudio.trackId=preferences.bgmTrack||chooseTrack(battle?.stage.id);syncSoundButton();}
 
 })();</script>
 </body></html>
