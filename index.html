@@ -447,6 +447,7 @@
   #mobile-action-slot{display:none}
   .mobile-dock{padding-bottom:calc(4px + env(safe-area-inset-bottom))}
 }
+.reward-chip.spell{background:#2a2346;border-color:#9a7fe0;color:#e6dcff;padding-left:9px}
 </style></head>
 <body>
 <div class="app">
@@ -585,17 +586,48 @@ const ACTION_COSTS={wait:30,move:40,attack:60,moveAttack:90,summon:80,moveSummon
 
 for(const m of MASTERS){m.attackType=m.id==='ranger'?6:m.id==='savage'?7:1;m.attackProfile=V2_ACTIONS[m.attackType];m.range=m.attackProfile.range;}
 
-// Clear rewards confirmed from original play footage (stage → summon ids). Everything else still uses the proxy below.
-// 1: Marme — reward screen after episode 1 of the user-selected playlist (docs/reviews/claude-20261024-c7e2a9-strategy-sim.md).
-const CONFIRMED_REWARDS={1:['marme']};
+// Original clear rewards per campaign stage (stage = playlist episode), read from each episode's reward screen.
+// Source table with quotes and timestamps: data/lab/original-rewards.json · docs/CAMPAIGN_STAGE_LESSONS.md
+//  1 마암 — confirmed · irDM3getf_0 18:32
+//  2 아·페리온 — confirmed · BclY6xM4hiA 11:09
+//  3 다룬다라 — confirmed · 2vEfTlThXUk 8:21
+//  4 블레스 — confirmed · H01_DpLQrM0 9:53
+//  5 펠리트 — confirmed · Shj3KznBzmc 16:15
+//  6 자밀펜 — confirmed · mpZtIqca9kk 12:27
+//  7 다·알마 — confirmed · EQ2XdnvK-zY 16:36
+//  8 메딕 — confirmed · taflCrI2AqA 17:15
+//  9 브릭스 — confirmed · UgcXHpRj6AE 18:47
+// 10 기아·브로 — confirmed · NxbIQpH9jv4 21:39
+// 11 큐리어·벨 — confirmed · Fq5AtrLiW8o 14:18
+// 12 업타이드 — confirmed · cRtodWB1zGU 23:59
+// 13 다운타이드 — confirmed · Hyv4c-uevps 32:52
+// 14 아모르타미스 — confirmed · rW3ni0cf9O0 32:30
+// 15 타브스 — confirmed · HEv2NhdHm6E 31:25
+// 16 오네비에르 — confirmed · _NXdzn6hpCM 20:08
+// 17 피프넬 — confirmed · orZbGbnzAFM 34:37
+// 18 넵튜노 — confirmed · fKfAR3YrSbE 20:53
+// 19 다·콤 — confirmed · uV67epym6gk 45:46
+// 20 그리온 — confirmed · ED5zbme3PWs 55:32
+// 21 배니시 — confirmed · SX_NAZbA6M8 77:18
+// 22 바·마도 — confirmed · DqPXkjMcjD8 30:27
+// 23 콘쥬레이트 — confirmed · Z7-EEEsJtig 21:21
+// 24 레그너·크록스 — confirmed · IWbK3Cx-KSE 84:16
+// 25 텐타크 — confirmed · mFaL7LeVkNM 42:36
+// 26 제노스브리드 — confirmed · LixCfwUWRNk 44:11
+// 27 보상 없음 — none-inferred · voucSv2CXns 57:26
+// 28 보상 없음 — none · ANcikeR03MY 29:58
+// 29 보상 없음 — none · KVMOMyhrKxw 48:30
+// 30 보상 없음 — none · ySJcXV8Vm1k 59:17
+const STARTER_SUMMONS=['fa-rancell','reque','hepitus','guene-foss'];
+const ORIGINAL_REWARDS={1:{summons:['marme'],spells:[]},2:{summons:['ae-ferrion'],spells:[]},3:{summons:['dullmdaler'],spells:[]},4:{summons:[],spells:['v2-13']},5:{summons:['pelitt'],spells:[]},6:{summons:['zamilpen'],spells:[]},7:{summons:['d-alma'],spells:[]},8:{summons:[],spells:['v2-14']},9:{summons:['blexe'],spells:[]},10:{summons:['gia-bro'],spells:[]},11:{summons:['currier-bell'],spells:[]},12:{summons:[],spells:['v2-10']},13:{summons:[],spells:['v2-11']},14:{summons:['amoltamiss'],spells:[]},15:{summons:['tarbss'],spells:[]},16:{summons:['oonevievle'],spells:[]},17:{summons:['fifenall'],spells:[]},18:{summons:['neptjunoue'],spells:[]},19:{summons:['da-colm'],spells:[]},20:{summons:['greon'],spells:[]},21:{summons:[],spells:['v2-12']},22:{summons:['ba-mado'],spells:[]},23:{summons:[],spells:['v2-15']},24:{summons:['regna-croxe'],spells:[]},25:{summons:['tentarch'],spells:[]},26:{summons:['zenosblead'],spells:[]},27:{summons:[],spells:[]},28:{summons:[],spells:[]},29:{summons:[],spells:[]},30:{summons:[],spells:[]}};
 function campaignInventory(cleared=[]){
-  const summons=new Set(['fa-rancell','reque','hepitus','guene-foss']),spells=new Set();
-  // Web progression uses the next battle's enemy repertoire as a documented proxy.
-  for(const id of cleared){if(!Number.isInteger(id)||id<1||id>30)continue;(CONFIRMED_REWARDS[id]||[]).forEach(s=>summons.add(s));const source=V2_MAPS[V2_PLAYLIST_ORDER[Math.min(29,id)]];source.enemyRoster.forEach(s=>summons.add(s));source.enemySpells.forEach(s=>spells.add(v2SpellId(s)));}
+  const summons=new Set(STARTER_SUMMONS),spells=new Set();
+  for(const id of cleared){if(!Number.isInteger(id)||id<1||id>30)continue;const reward=ORIGINAL_REWARDS[id];reward.summons.forEach(s=>summons.add(s));reward.spells.forEach(s=>spells.add(s));}
   return {unlocked:[...summons],extraSpells:[...spells]};
 }
-// First campaign stage whose victory unlocks this summon under campaignInventory (0 = available from the start).
-function summonUnlockStage(id){if(['fa-rancell','reque','hepitus','guene-foss'].includes(id))return 0;for(let n=1;n<=30;n++){const source=V2_MAPS[V2_PLAYLIST_ORDER[Math.min(29,n)]];if(CONFIRMED_REWARDS[n]?.includes(id)||source?.enemyRoster.includes(id))return n;}return null;}
+// Campaign stage whose victory unlocks this summon (0 = available from the start, null = never).
+function summonUnlockStage(id){if(STARTER_SUMMONS.includes(id))return 0;for(let n=1;n<=30;n++)if(ORIGINAL_REWARDS[n].summons.includes(id))return n;return null;}
+function spellUnlockStage(id){for(let n=1;n<=30;n++)if(ORIGINAL_REWARDS[n].spells.includes(id))return n;return null;}
 function recordVictory(progress,stage){
   if(stage.custom||progress.cleared.includes(stage.id))return {...progress,cleared:[...progress.cleared]};
   const cleared=[...progress.cleared,stage.id];return {...progress,cleared,exp:cleared.length*100,unlocked:Math.max(progress.unlocked,Math.min(30,stage.id+1)),level:playerLevel(cleared.length*100)};
@@ -1608,16 +1640,17 @@ for(const id of ['range-view','range-subject','range-spell'])$('#'+id).onchange=
 $('#target-confirm').onclick=()=>{if(aimedAttack!==null){const id=aimedAttack;act(()=>battle.attack(id));return;}if(!aimedTile)return;const target=aimedTile;act(()=>battle.cast(selectedSpell,target));};
 $('#target-cancel').onclick=()=>{clearAim();highlights();};
 window.addEventListener('beforeunload',()=>save());
-// Locked summons: say which campaign victory brings them (campaignInventory's current progression).
+// Locked summons: say which campaign victory brings them (original clear rewards, campaign.js).
 function unlockText(id){const n=summonUnlockStage(id),here=battle?.stage?.custom?null:battle?.stage?.id;if(n===null)return '원정 보상으로 얻습니다';if(here&&n===here)return '이번 전장 승리 시 획득';if(here&&n<here)return '이미 지난 전장의 보상 · 원정 지도에서 그 전장을 이기면 획득';return `${n}번째 전장 승리 시 획득`;}
 // Master data descriptions are provenance notes, not player copy.
 function masterBlurb(m){return /추가/.test(m?.description||'')?'특별 소환사 · 고유 성장':'기본 직업 소환사';}
 // C2: campaign stage detail — minimap, opponent, stones, and the summons this victory unlocks (campaignInventory rule).
 function stageRewards(id){return SUMMONS.filter(s=>summonUnlockStage(s.id)===id);}
-function stageDetail(st,i){const foe=[...MASTERS,...BOSSES].find(d=>d.id===st.enemyMasterStart?.classId),rewards=stageRewards(i+1),cleared=progress.cleared.includes(i+1),el=foe&&ELEMENTS[foe.element];return `<section class="stage-detail"><canvas id="stage-minimap" width="320" height="200" aria-label="${esc(st.name)} 지도 미리보기"></canvas><div><span class="eyebrow">${i+1}번째 전장${cleared?' · 승리':''}</span><h3>${esc(st.name)}</h3><p>상대 ${foe?`<img src="${portrait(displayDef(foe))}" alt="">`:''}<b>${esc(st.enemyMasterStart?.name||foe?.name||'적 소환사')}</b>${el?` <span style="color:${el.color}">${el.glyph}</span>`:''}</p><p>마석 ${st.manaStones.length}개${st.portals?.length?` · 포탈 ${st.portals.length}쌍`:''}</p><p class="reward">${rewards.length?`승리 보상 · ${rewards.map(r=>`<span class="reward-chip"><img src="${portrait(displayDef(r))}" alt="">${esc(displayDef(r).name)}</span>`).join('')}`:'승리 보상 · 새 정령 없음'}</p></div></section>`;}
+function spellRewardChips(id){return (ORIGINAL_REWARDS[id]?.spells||[]).map(sid=>`<span class="reward-chip spell">✦ ${esc(SPELLS[sid]?.name||sid)}</span>`).join('');}
+function stageDetail(st,i){const foe=[...MASTERS,...BOSSES].find(d=>d.id===st.enemyMasterStart?.classId),rewards=stageRewards(i+1),cleared=progress.cleared.includes(i+1),el=foe&&ELEMENTS[foe.element];return `<section class="stage-detail"><canvas id="stage-minimap" width="320" height="200" aria-label="${esc(st.name)} 지도 미리보기"></canvas><div><span class="eyebrow">${i+1}번째 전장${cleared?' · 승리':''}</span><h3>${esc(st.name)}</h3><p>상대 ${foe?`<img src="${portrait(displayDef(foe))}" alt="">`:''}<b>${esc(st.enemyMasterStart?.name||foe?.name||'적 소환사')}</b>${el?` <span style="color:${el.color}">${el.glyph}</span>`:''}</p><p>마석 ${st.manaStones.length}개${st.portals?.length?` · 포탈 ${st.portals.length}쌍`:''}</p><p class="reward">${rewards.length||spellRewardChips(i+1)?`승리 보상 · ${rewards.map(r=>`<span class="reward-chip"><img src="${portrait(displayDef(r))}" alt="">${esc(displayDef(r).name)}</span>`).join('')}${spellRewardChips(i+1)}`:'승리 보상 · 없음'}</p></div></section>`;}
 function drawStageMinimap(st){const cv=$('#stage-minimap');if(!cv||!st)return;const hp=t=>{const q=hexToPixel(t);return {x:q.x,y:q.y*.74};},g=cv.getContext('2d'),pts=st.tiles.filter(t=>t.terrain!=='void').map(t=>({t,p:hp(t)})),xs=pts.map(o=>o.p.x),ys=pts.map(o=>o.p.y),minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys),k=Math.min((cv.width-16)/(maxX-minX||1),(cv.height-16)/(maxY-minY||1)),ox=(cv.width-(maxX-minX)*k)/2,oy=(cv.height-(maxY-minY)*k)/2,at=p=>[ox+(p.x-minX)*k,oy+(p.y-minY)*k];g.clearRect(0,0,cv.width,cv.height);const r=Math.max(2,32*k);for(const {t,p} of pts){const [x,y]=at(p);g.fillStyle=TERRAIN[t.terrain]?.color||'#555';g.beginPath();g.ellipse(x,y,r,r*.74,0,0,Math.PI*2);g.fill();}const dot=(pos,c,size)=>{if(!pos)return;const [x,y]=at(hp(pos));g.fillStyle=c;g.strokeStyle='#0008';g.lineWidth=1.5;g.beginPath();g.arc(x,y,size,0,Math.PI*2);g.fill();g.stroke();};for(const m of st.manaStones)dot(m,'#cfeaff',Math.max(2.5,r*.8));dot(st.playerMasterStart,'#9be86a',Math.max(4,r*1.2));dot(st.enemyMasterStart,'#ff6f5a',Math.max(4,r*1.2));}
 // C4: rewards on the result screen.
-function resultRewards(id){const rewards=stageRewards(id),next=id<30?generateStage(id):null;return `<div class="result-rewards">${rewards.length?`<span class="eyebrow">새로 얻은 정령</span><div>${rewards.map(r=>`<span class="reward-chip"><img src="${portrait(displayDef(r))}" alt="">${esc(displayDef(r).name)} <b>◆${r.cost}</b></span>`).join('')}</div>`:''}${next?`<p>다음 전장 · <b>${id+1}. ${esc(next.name)}</b></p>`:''}</div>`;}
+function resultRewards(id){const rewards=stageRewards(id),next=id<30?generateStage(id):null;const spellsWon=spellRewardChips(id);return `<div class="result-rewards">${rewards.length||spellsWon?`<span class="eyebrow">${rewards.length?'새로 얻은 정령':'새로 얻은 마법'}</span><div>${rewards.map(r=>`<span class="reward-chip"><img src="${portrait(displayDef(r))}" alt="">${esc(displayDef(r).name)} <b>◆${r.cost}</b></span>`).join('')}${spellsWon}</div>`:''}${next?`<p>다음 전장 · <b>${id+1}. ${esc(next.name)}</b></p>`:''}</div>`;}
 // C3: settings become three tabs; existing controls are moved, not duplicated (their handlers stay attached).
 let settingsTab='game';
 function arrangeSettingsTabs(){const body=content.querySelector('.audio-settings');if(!body||body.dataset.tabs)return;body.dataset.tabs='1';const panel=name=>{const d=document.createElement('div');d.className='settings-panel';d.dataset.panel=name;return d;},game=panel('game'),sound=panel('sound'),adv=panel('advanced'),kids=[...body.children],firstHaptic=kids.findIndex(e=>e.classList.contains('haptic-settings'));kids.forEach((e,i)=>{if(e.id==='audio-tuning'||e.classList.contains('audio-note'))adv.append(e);else if(e.classList.contains('haptic-settings'))game.append(e);else if(firstHaptic<0||i<firstHaptic)sound.append(e);else adv.append(e);});
