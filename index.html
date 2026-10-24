@@ -704,6 +704,9 @@ function validateStage(stage){
 }
 
 
+// Weights of the 'original' difficulty AI (decision only). Tuned with the strategy lab; see
+// docs/reviews/claude-20261024-c7e2a9-ai-original.md. Rule numbers are not here.
+const ORIGINAL_AI={masterRisk:6,masterLethal:400,natialRisk:1,recapture:10,guard:20,recapturePull:1.5,guardPull:.5,tideMin:12,counterSummon:12,dayNightSummon:6,huntReach:2};
 class Battle {
   constructor(stage,masterId='fighter',options={}) {
     this.stage=structuredClone(validateStage(stage));this.tiles=new Map(this.stage.tiles.map(t=>[key(t),t]));
@@ -892,7 +895,7 @@ class Battle {
   threatDamage(enemy,proxy){if(['freeze','petrify','sleep','stun'].some(s=>this.hasStatus(enemy,s)))return 0;let amount=this.canAttack(enemy,proxy)?this.damage(enemy,proxy,enemy.magicAttackBasic).amount:0;
     for(const s of this.availableSpells(enemy)){if(s.kind!=='damage'||this.mana[enemy.team]<s.cost||this.hasStatus(enemy,'silence'))continue;const center=s.selfArea?enemy:proxy,legal=s.selfArea?this.actionInRange(enemy,proxy,{trajectory:2,range:s.radius},{area:true}):this.actionInRange(enemy,proxy,s);if(legal)amount=Math.max(amount,this.damage(enemy,proxy,!s.physical,s,center).amount);}return amount;
   }
-  aiTurn(){const u=this.active;if(!u||this.winner!==null)return;if(u.isDecoy){this.wait();return;}let enemies=this.living.filter(t=>t.team!==u.team&&this.visibleUnit(t,u.team));
+  aiTurn(){if(this.difficulty==='original')return this.aiTurnOriginal();const u=this.active;if(!u||this.winner!==null)return;if(u.isDecoy){this.wait();return;}let enemies=this.living.filter(t=>t.team!==u.team&&this.visibleUnit(t,u.team));
     const tryMagic=()=>{let best=null,bestScore=0;for(const s of this.availableSpells(u)){if(this.mana[u.team]<s.cost||this.hasStatus(u,'silence'))continue;for(const p of this.spellTargets(u,s.id)){let score=0;const affected=this.affected(u,s,p);
         for(const t of affected){if(s.kind==='heal')score+=Math.min(this.healing(u,s),t.maxHp-t.hp)*(t.master?3:1.3);if(s.kind==='damage'){const dmg=this.damage(u,t,!s.physical,s,p).amount;score+=(t.team===u.team?-2:1)*(Math.min(dmg,t.hp)+(t.master?3:0)+(dmg>=t.hp?8:0));}if(s.kind==='cleanse')score+=Object.keys(t.statuses).length*8;if(s.kind==='status'&&!this.hasStatus(t,s.status))score+=s.status==='poison'?3:5;if(s.kind==='charm')score+=t.master?0:8;if(s.kind==='command'&&t.id!==u.id)score+=3;if(s.kind==='dispel')score+=Object.keys(t.statuses).length*2;}
         if(s.kind==='buff'&&!this.hasStatus(u,s.status)&&enemies.some(t=>distance(u,t)<5))score+=4;if(score>s.cost*.45+2&&score>bestScore){best={s,p};bestScore=score;}}
@@ -914,6 +917,96 @@ class Battle {
       let count=0;const cheapest=Math.min(...options.map(s=>s.cost));for(const type of options){if(u.type==='gid-kahn'&&count===0&&this.mana[u.team]>=cheapest*2&&type.cost+cheapest>this.mana[u.team])continue;const places=this.summonTiles(u,type.id).sort((a,b)=>{const value=p=>(this.stones.some(s=>s.owner!==u.team&&key(s)===key(p))?-100:0)+distance(p,goal||u);return value(a)-value(b);});if(places.length&&this.canSummon(type.id,u)){this.summon(type.id,places[0],false);if(++count>=(u.type==='gid-kahn'?2:1))break;}}
       if(count){this.finish('summon');return;}
     }this.wait();
+  }
+  // 'original' difficulty: decision-making only (no rule or number changes). Ports the lab's classic agent
+  // (docs/reviews/claude-20261024-c7e2a9-strategy-sim.md) and adds tide use and stone recapture/guarding.
+  // Deterministic: ties break on originalPositionPreference and ids, so 'ai' replays stay reproducible.
+  aiReach(team){return this.living.filter(e=>e.team!==team&&!e.isDecoy&&this.visibleUnit(e,team)&&!['freeze','petrify','sleep','stun'].some(s=>this.hasStatus(e,s))).map(e=>({e,melee:e.healerOnly?0:e.range,tiles:[...this.reachable(e).dist.keys()].map(k=>this.tiles.get(k)),spells:this.hasStatus(e,'silence')?[]:this.availableSpells(e).filter(s=>s.kind==='damage'&&this.mana[e.team]>=s.cost)}));}
+  // Worst hit each enemy could land on u at p after its own move; distance-only range, so it errs cautious.
+  aiThreat(reach,u,p,facing=u.facing){const proxy={...u,q:p.q,r:p.r,facing};let total=0;
+    for(const {e,melee,tiles,spells} of reach){let best=0;const cache=new Map(),hit=(id,fb,f)=>{const k=id+fb;if(!cache.has(k))cache.set(k,f());return cache.get(k);};
+      for(const t of tiles){const d=distance(t,p);if(!d)continue;const fb=originalFacingBonus(t,proxy),from={...e,q:t.q,r:t.r};
+        if(melee&&d<=melee)best=Math.max(best,hit('',fb,()=>this.damage(from,proxy,e.magicAttackBasic).amount));
+        for(const s of spells)if(d<=(s.range||0)+(s.radius||0))best=Math.max(best,hit(s.id,s.radius?0:fb,()=>this.damage(from,proxy,!s.physical,s,proxy).amount));}
+      total+=Math.min(best,u.hp);}
+    return total;}
+  aiCounter(proxy,t){if(distance(proxy,t)!==1||['freeze','petrify','sleep','stun'].some(s=>this.hasStatus(t,s))||originalFacingBonus(proxy,t)===8)return 0;const a={...proxy,facing:direction(proxy,t)};return this.canAttack(t,a)?Math.min(proxy.hp,this.damage(t,a,t.magicAttackBasic).amount):0;}
+  aiKill(t,d){return d>=t.hp?(t.master?5000:30+(t.cost||0)/3):0;}
+  aiAttackValue(proxy,t){const d=this.damage(proxy,t,proxy.magicAttackBasic).amount;if(!d)return null;let v=Math.min(t.hp,d)*4+(t.master?14+(t.maxHp-t.hp)*2:t.maxHp-t.hp)+this.aiKill(t,d);if(d<t.hp)v-=this.aiCounter(proxy,t)*(proxy.master?10:3);return {v,d};}
+  // Natials split over stones: the opponent's stones first (recapture), then neutral ones, then own stones an enemy can reach next turn (guard).
+  aiStoneGoals(team){const foes=this.living.filter(x=>x.team!==team&&!x.isDecoy&&!x.master),pairs=[],goal=new Map(),taken=new Set();
+    const threatened=s=>!this.at(s)&&foes.some(f=>distance(f,s)<=f.move+1);
+    const targets=this.stones.filter(s=>s.owner!==team||threatened(s));
+    for(const s of targets)for(const n of this.living.filter(x=>x.team===team&&!x.master&&!x.isDecoy))pairs.push([distance(s,n)/Math.max(1,n.move)-(s.owner===1-team?ORIGINAL_AI.recapturePull:s.owner===team?ORIGINAL_AI.guardPull:0),s,n]);
+    pairs.sort((a,c)=>a[0]-c[0]||a[2].id-c[2].id);
+    for(const [,s,n] of pairs){if(goal.has(n.id)||taken.has(key(s)))continue;goal.set(n.id,s);taken.add(key(s));}
+    return goal;}
+  aiSummonChoice(u){const team=u.team,income=this.income(team),upkeep=this.upkeep(team),light=this.brightness();
+    const foes=this.living.filter(t=>t.team!==team&&!t.master&&!t.isDecoy&&this.visibleUnit(t,team)).map(t=>t.element),n=Math.max(1,foes.length),open=this.stones.some(s=>s.owner!==team);let best=null;
+    for(const type of SUMMONS){if(!this.canSummon(type.id,u)||upkeep+type.upkeep>income)continue;
+      const beats=foes.filter(e=>ELEMENTS[type.element]?.beats===e).length,beaten=foes.filter(e=>ELEMENTS[e]?.beats===type.element).length;
+      const favored=type.dayNight===1?light===1:type.dayNight===2&&light===0,opposed=type.dayNight===1?light===0:type.dayNight===2&&light===1;
+      const v=type.cost*.35+(beats-beaten)/n*ORIGINAL_AI.counterSummon+(favored?ORIGINAL_AI.dayNightSummon:opposed?-ORIGINAL_AI.dayNightSummon:0)+(type.range>1||type.spells.length?4:0)+(open?(type.move+(type.flying?2:0))*1.5:0);
+      if(!best||v>best.v)best={type,v};}
+    return best;}
+  aiSpellOptions(u){const out=[];if(this.hasStatus(u,'silence'))return out;
+    for(const s of this.availableSpells(u)){if(this.mana[u.team]<s.cost||!['damage','heal','status','cleanse'].includes(s.kind))continue;
+      for(const p of this.spellTargets(u,s.id)){if(!this.visible(p,u.team))continue;let v=-s.cost*.5;
+        for(const t of this.affected(u,s,p)){if(!this.visibleUnit(t,u.team))continue;
+          if(s.kind==='damage'){const d=this.damage(u,t,!s.physical,s,p).amount;v+=(t.team===u.team?-1.5:1)*(Math.min(t.hp,d)*4+(t.master?14:0)+this.aiKill(t,d));}
+          if(s.kind==='heal'&&t.team===u.team)v+=Math.min(this.healing(u,s),t.maxHp-t.hp)*(t.master?8:4);
+          if(s.kind==='cleanse'&&t.team===u.team)v+=Object.keys(t.statuses).length*8;
+          if(s.kind==='status'&&t.team!==u.team&&!this.hasStatus(t,s.status))v+=12+(t.master?10:0);}
+        if(v>4)out.push({s,p,v});}}
+    return out;}
+  // Up/Downtide (manual4: only masters change the water level). Played forward on a restored copy:
+  // units left where they cannot land take hazard damage and lose footing; swimmers gain room, walkers lose it.
+  aiTideOption(u){if(this.hasStatus(u,'silence'))return null;let best=null;
+    for(const s of this.availableSpells(u).filter(s=>s.kind==='tide'&&this.mana[u.team]>=s.cost)){
+      if(this.tide&&this.tide.delta===s.tideDelta&&this.tide.expiresAt-this.time>60)continue;
+      let sim;try{sim=Battle.restore(this.serialize());}catch{continue;}sim.changeTide(s.tideDelta,s.duration);
+      let v=-s.cost*.4;
+      for(const x of this.living){if(x.isDecoy)continue;const y=sim.units.find(z=>z.id===x.id),sign=x.team===u.team?-1:1;
+        const lost=this.canLand(x,this.tiles.get(key(x)))&&!sim.canLand(y,sim.tiles.get(key(y)));if(lost)v+=sign*(x.master?30:8+(x.cost||0)/8);
+        if(!x.master&&distance(x,u)<=12)v+=sign*-.12*(sim.reachable(y).dist.size-this.reachable(x).dist.size);}
+      if(v>ORIGINAL_AI.tideMin&&(!best||v>best.v))best={s,v};}
+    return best;}
+  aiTurnOriginal(){const u=this.active;if(!u||this.winner!==null)return;if(u.isDecoy){this.wait();return;}
+    const team=u.team,reach=this.aiReach(team),enemies=this.living.filter(t=>t.team!==team&&this.visibleUnit(t,team));
+    const foeMaster=enemies.find(t=>t.master)||this.units.find(t=>t.master&&t.team!==team&&t.hp>0&&this.visible(t,team))||null;
+    const open=this.stones.filter(s=>s.owner!==team),nearest=(list,p)=>list.reduce((a,c)=>!a||distance(c,p)<distance(a,p)?c:a,null);
+    const lethal=()=>enemies.filter(t=>t.master&&this.canAttack(u,t)&&this.damage(u,t,u.magicAttackBasic).amount>=t.hp)[0];
+    let kill=lethal();if(kill){this.attack(kill.id);return;}
+    if(u.master&&!this.moved){const tide=this.aiTideOption(u);if(tide){this.cast(tide.s.id,u);return;}}
+    let goal;if(u.master){const safeStone=this.stones.filter(s=>s.owner===team&&(!this.at(s)||this.at(s).id===u.id)).sort((a,c)=>this.aiThreat(reach,u,a)-this.aiThreat(reach,u,c)||distance(a,u)-distance(c,u))[0];goal=nearest(open,u)&&this.aiThreat(reach,u,nearest(open,u))<u.hp?nearest(open,u):safeStone||foeMaster||u;}
+    else{const assigned=this.aiStoneGoals(team).get(u.id);goal=foeMaster&&(!assigned||distance(u,foeMaster)<=u.move+u.range+ORIGINAL_AI.huntReach)?foeMaster:assigned||nearest(enemies,u)||foeMaster||u;}
+    const field=reachable(goal,Infinity,this.tiles,(t,from)=>originalMoveCost(u,from,t)).dist,goalCost=p=>field.get(key(p))??distance(p,goal)*3+20;
+    const guard=s=>s&&s.owner===team&&enemies.some(f=>!f.master&&distance(f,s)<=f.move+1);
+    const position=(p,facing)=>{const stone=this.stones.find(s=>key(s)===key(p));let v=-goalCost(p)*(u.master?.8:1.6)+(100-originalTerrainPercent(p))/10*(u.master?3:1.5);
+      if(stone&&stone.owner!==team)v+=u.master?40:45+(stone.owner===1-team?ORIGINAL_AI.recapture:0);else if(stone)v+=(u.hp<u.maxHp?4:0)+(u.master?6:0)+(!u.master&&guard(stone)?ORIGINAL_AI.guard:0);
+      if(p.terrain==='swamp'||p.terrain==='lava'&&u.element!=='fire'&&!u.flying)v-=15;
+      const th=this.aiThreat(reach,u,p,facing);v-=u.master?th*ORIGINAL_AI.masterRisk+(th>=u.hp?ORIGINAL_AI.masterLethal:0):th*ORIGINAL_AI.natialRisk+(th>=u.hp?8+(u.cost||0)/4:0);return v;};
+    const summon=u.master?this.aiSummonChoice(u):null,spots=(p,type)=>DIRECTIONS.map(d=>this.tiles.get(key({q:p.q+d.q,r:p.r+d.r}))).filter(t=>t&&(!this.at(t)||this.at(t).id===u.id)&&key(t)!==key(p)&&this.canLand(type,t));
+    const spellEstimate=proxy=>{let best=0;if(this.hasStatus(u,'silence'))return 0;for(const s of this.availableSpells(u)){if(s.kind!=='damage'||this.mana[team]<s.cost)continue;for(const t of enemies){if(distance(proxy,t)>(s.range||0)+(s.radius||0))continue;const d=this.damage(proxy,t,!s.physical,s,t).amount;best=Math.max(best,Math.min(t.hp,d)*4+(t.master?14:0)+this.aiKill(t,d)-s.cost*.5);}}return best;};
+    // Phase 1: choose where to stand (current tile included), scoring the best follow-up there.
+    if(!this.moved&&!this.hasStatus(u,'root')){let best=null;const here=this.tiles.get(key(u));
+      for(const p of [here,...[...this.reachable(u).dist.keys()].filter(k=>k!==key(u)).map(k=>this.tiles.get(k))]){
+        const proxy={...u,q:p.q,r:p.r},near=nearest(enemies,p),base=position(p,near?direction(p,near):u.facing);let v=base;
+        for(const t of enemies){if(!this.canAttack(proxy,t))continue;const a=this.aiAttackValue({...proxy,facing:direction(p,t)},t);if(a)v=Math.max(v,position(p,direction(p,t))+a.v+6);}
+        if(summon&&spots(p,summon.type).length)v=Math.max(v,base+40+summon.v);
+        const s=spellEstimate(proxy);if(s>4)v=Math.max(v,base+s);
+        if(!best||v>best.v||v===best.v&&originalPositionPreference(p)>originalPositionPreference(best.p))best={p,v};}
+      if(best&&best.p!==here)this.move(best.p);
+      if(this.active?.id!==u.id)return;kill=lethal();if(kill){this.attack(kill.id);return;}}
+    // Phase 2: act exactly from wherever the unit ended up (ice/portals may have moved it).
+    const p=this.tiles.get(key(u)),acts=[];
+    for(const t of enemies){if(!this.canAttack(u,t))continue;const a=this.aiAttackValue({...u,facing:direction(u,t)},t);if(a)acts.push({v:a.v+6,run:()=>this.attack(t.id)});}
+    for(const o of this.aiSpellOptions(u))acts.push({v:o.v,run:()=>this.cast(o.s.id,o.p)});
+    if(summon){const tiles=this.summonTiles(u,summon.type.id);if(tiles.length){const target=nearest(open,u)||foeMaster||u,spot=tiles.reduce((a,c)=>distance(c,target)<distance(a,target)?c:a);acts.push({v:40+summon.v,run:()=>this.summon(summon.type.id,spot)});}}
+    acts.sort((a,c)=>c.v-a.v);
+    if(acts.length&&acts[0].v>0&&acts[0].run())return;
+    const near=nearest(enemies,u);if(near){const f=direction(u,near);if(f!==u.facing&&this.aiThreat(reach,u,p,f)<this.aiThreat(reach,u,p,u.facing))this.setFacing(f);}
+    this.wait();
   }
   serialize(){return {version:5,stage:this.stage,tide:this.tide,units:this.units,stones:this.stones,mana:this.mana,time:this.time,turn:this.turn,round:this.round,nextId:this.nextId,activeId:this.activeId,winner:this.winner,log:this.log,moved:this.moved,moveCost:this.moveCost,moveUndo:this.moveUndo??null,difficulty:this.difficulty,custom:this.custom,traps:this.traps,unlocked:this.unlocked,extraSpells:this.extraSpells};}
   static restore(data){
@@ -1118,9 +1211,9 @@ class Renderer {
     if(t.terrain==='forest'){const x=p.x+7,y=p.y-3;c.fillStyle='#243e3055';c.beginPath();c.ellipse(x,y+7,15,6,0,0,TAU);c.fill();c.fillStyle='#6f6550';c.fillRect(x-2,y-18,4,25);for(let j=0;j<3;j++){c.fillStyle=['#2d4f3c','#365b41','#456d49'][j];c.beginPath();c.moveTo(x,y-47+j*12);c.lineTo(x-17+j*3,y-17+j*11);c.lineTo(x+17-j*3,y-17+j*11);c.closePath();c.fill();}c.fillStyle='#84a96c88';c.fillRect(x-3,y-34,3,8);}
     if(t.terrain==='rock'){c.fillStyle='#667565';c.beginPath();c.moveTo(p.x-12,p.y+7);c.lineTo(p.x-10,p.y-5);c.lineTo(p.x,p.y-14);c.lineTo(p.x+12,p.y-6);c.lineTo(p.x+15,p.y+6);c.fill();c.fillStyle='#bcc3a7';c.beginPath();c.moveTo(p.x-10,p.y-5);c.lineTo(p.x,p.y-14);c.lineTo(p.x+12,p.y-6);c.lineTo(p.x,p.y);c.fill();}
   }
-  stone(s,now){const t=this.battle.tiles.get(key(s)),p=this.point(t),c=this.ctx,col=s.owner===0?'#d5e59f':s.owner===1?'#e8a48d':'#b2cce5';c.fillStyle='#374d49';c.beginPath();c.ellipse(p.x,p.y+4,13,7,0,0,TAU);c.fill();c.strokeStyle=col+'99';c.lineWidth=1;c.beginPath();c.ellipse(p.x,p.y,17,9,0,0,TAU);c.stroke();const bob=this.reduced?0:Math.sin(now/700+s.q)*2;c.shadowBlur=14;c.shadowColor=col;c.fillStyle=col;c.beginPath();c.moveTo(p.x,p.y-32+bob);c.lineTo(p.x+8,p.y-19+bob);c.lineTo(p.x,p.y-5+bob);c.lineTo(p.x-8,p.y-19+bob);c.closePath();c.fill();c.shadowBlur=0;c.fillStyle='#ffffff99';c.beginPath();c.moveTo(p.x,p.y-32+bob);c.lineTo(p.x,p.y-5+bob);c.lineTo(p.x-8,p.y-19+bob);c.closePath();c.fill();}
+  stone(s,now){const t=this.battle.tiles.get(key(s)),p=this.point(t),c=this.ctx,col=s.owner===0?'#7dffb0':s.owner===1?'#ff6a55':'#d8e6f5';this.hex(p.x,p.y,31);c.fillStyle=s.owner===0?'#2fd27240':s.owner===1?'#ff3d2a40':'#ffffff12';c.fill();c.strokeStyle=s.owner===0?'#7dffb0dd':s.owner===1?'#ff6a55dd':'#d8e6f566';c.lineWidth=s.owner===null?1.2:2.4;c.stroke();const a=this.battle.active;if(a&&a.team===0&&a.hp>0&&key(a)===key(s)&&s.owner!==0&&!a.isDecoy){const pulse=this.reduced?1:.6+.4*Math.sin(now/220);c.save();c.globalAlpha=pulse;c.setLineDash([5,4]);this.hex(p.x,p.y,34);c.strokeStyle='#7dffb0';c.lineWidth=2.5;c.stroke();c.setLineDash([]);c.restore();c.font='bold 10px system-ui';c.textAlign='center';c.fillStyle='#0b1712cc';c.fillRect(p.x-27,p.y+10,54,15);c.fillStyle='#b9ffd0';c.fillText('점령 예정',p.x,p.y+21);}c.fillStyle='#374d49';c.beginPath();c.ellipse(p.x,p.y+4,13,7,0,0,TAU);c.fill();c.strokeStyle=col+'99';c.lineWidth=1;c.beginPath();c.ellipse(p.x,p.y,17,9,0,0,TAU);c.stroke();const bob=this.reduced?0:Math.sin(now/700+s.q)*2;c.shadowBlur=14;c.shadowColor=col;c.fillStyle=col;c.beginPath();c.moveTo(p.x,p.y-32+bob);c.lineTo(p.x+8,p.y-19+bob);c.lineTo(p.x,p.y-5+bob);c.lineTo(p.x-8,p.y-19+bob);c.closePath();c.fill();c.shadowBlur=0;c.fillStyle='#ffffff99';c.beginPath();c.moveTo(p.x,p.y-32+bob);c.lineTo(p.x,p.y-5+bob);c.lineTo(p.x-8,p.y-19+bob);c.closePath();c.fill();}
   unit(u,now){const c=this.ctx,p=this.motion(u,now);const bob=this.reduced?0:Math.sin(now/450+u.id)*1.3;c.fillStyle='#172d2977';c.beginPath();c.ellipse(p.x,p.y+4,16,7,0,0,TAU);c.fill();c.strokeStyle=u.team===0?'#d2e6a0':'#e6a28e';c.lineWidth=2;c.beginPath();c.ellipse(p.x,p.y+3,15,6,0,0,TAU);c.stroke();const fx=this.effects.filter(e=>e.id===u.id&&e.start<=now&&now-e.start<(e.type==='damage'?220:e.duration)&&['damage','attack','spell','summon','move'].includes(e.type)).sort((a,b)=>b.start-a.start)[0];const state=fx?({damage:'hit',attack:'attack',spell:'cast',summon:'cast',move:'move'})[fx.type]:'idle',count=({idle:4,move:6,attack:8,cast:6,hit:2})[state];const frame=fx?state==='move'?Math.floor((now-fx.start)*this.speed/100)%6:Math.min(count-1,Math.floor((now-fx.start)/fx.duration*count)):Math.floor(now/220)%4;const {kx,ky}=this.bodyOffset(u,fx,state,p,now);c.save();if(!referenceSprite(u)&&[2,3,4].includes(u.facing)){c.translate((p.x+kx)*2,0);c.scale(-1,1);}paintSprite(c,p.moving?{...u,facing:direction(p.from,p.to)}:u,p.x+kx,p.y+2+bob+ky,1.65,{state,frame});c.restore();if(state==='hit'&&now-fx.start<220)this.hitFlash(u,fx,p,kx,ky+bob,state,frame,now);if(u.master){c.fillStyle='#e6c886';c.font='13px Georgia';c.textAlign='center';c.fillText('♛',p.x,p.y-54+bob);}if(u.element!=='neutral'){c.fillStyle=ELEMENTS[u.element].color;c.font='10px system-ui';c.textAlign='center';c.fillText(ELEMENTS[u.element].glyph,p.x+20,p.y-19);}}
-  effect(e,now){if(e.type==='damage'||e.type==='heal')return;const c=this.ctx,progress=(now-e.start)/e.duration;let p=e.q!==undefined?this.point(this.battle.tiles.get(key(e))):null;c.globalAlpha=Math.max(0,1-progress);if(e.type==='down'){paintSprite(c,e.unit,p.x,p.y+2,1.65,{state:'down',frame:Math.min(3,Math.floor(progress*4))});}else if(e.type==='summon'||e.type==='capture'||e.type==='spell'){const color=ELEMENTS[e.element]?.color||'#d6e5ad';c.strokeStyle=color;c.lineWidth=3;c.beginPath();c.ellipse(p.x,p.y,14+progress*60,8+progress*35,0,0,TAU);c.stroke();for(let i=0;i<8;i++){const a=i*TAU/8+progress*2;c.fillStyle=color;c.fillRect(p.x+Math.cos(a)*progress*45,p.y-20+Math.sin(a)*progress*35,3,3);}}else if(e.type==='attack')this.attackFx(e,progress);c.globalAlpha=1;}
+  effect(e,now){if(e.type==='damage'||e.type==='heal')return;const c=this.ctx,progress=(now-e.start)/e.duration;let p=e.q!==undefined?this.point(this.battle.tiles.get(key(e))):null;c.globalAlpha=Math.max(0,1-progress);if(e.type==='down'){paintSprite(c,e.unit,p.x,p.y+2,1.65,{state:'down',frame:Math.min(3,Math.floor(progress*4))});}else if(e.type==='summon'||e.type==='capture'||e.type==='spell'){const color=e.type==='capture'?(e.team===0?'#7dffb0':'#ff6a55'):ELEMENTS[e.element]?.color||'#d6e5ad';c.strokeStyle=color;c.lineWidth=3;c.beginPath();c.ellipse(p.x,p.y,14+progress*60,8+progress*35,0,0,TAU);c.stroke();for(let i=0;i<8;i++){const a=i*TAU/8+progress*2;c.fillStyle=color;c.fillRect(p.x+Math.cos(a)*progress*45,p.y-20+Math.sin(a)*progress*35,3,3);}}else if(e.type==='attack')this.attackFx(e,progress);c.globalAlpha=1;}
   healthOverlay(now){
     const c=this.ctx,bounds={x:5,y:46,width:this.width-10,height:Math.max(0,this.height-122)};
     const units=this.battle.units.filter(u=>this.displayHp(u,now)>0&&this.battle.visibleUnit(u)&&this.battle.visible(this.motion(u,now).cell));
@@ -1499,6 +1592,7 @@ renderer.setSpeed(speed);
 let combatHits=[];
 function presentEffect(e,timely){
   if(e.type==='damage'){combatHits.push(e);renderCombatReport(combatHits);renderUnit();}
+  if(e.type==='capture'){const n=battle.owned(e.team),all=battle.stones.length;toast(e.team===0?`◆ 마석 점령! (${n}/${all}) · 정산마다 MP 수입 증가`:`적이 마석을 점령했습니다 (적 ${n}/${all})`);}
   if(timely){haptics.impact(e);soundEvent(presentationSound(e));}
 }
 let combatHoldUntil=0;
