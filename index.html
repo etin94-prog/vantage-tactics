@@ -1857,11 +1857,11 @@ function observeUnit(u){observing=true;hideWheel();clearAim();selectedId=u.id;$(
 function exitObserve(){if(!observing)return;observing=false;$('#range-subject').value='active';$('#range-view').value='auto';selectedId=battle.activeId;renderUnit();highlights();}
 function openMenuAfterMove(){if(!menuAfterMove||renderer.isPlaying())return;menuAfterMove=false;const u=battle.active;if(u?.team===0&&battle.moved&&battle.winner===null&&!dialog.open)showWheel(u);}
 // Difficulty chips shown where a new battle is chosen (first screen, campaign, settings); applies from the next battle.
-const DIFFICULTY_NOTES={normal:'처음이라면 이것 · 적이 몸을 사리며 싸웁니다',easy:'연습용 · 적이 무리하게 돌격합니다',original:'원작 실행 파일의 AI · 마석을 집요하게 노립니다 (매우 어려움)'};
+const DIFFICULTY_NOTES={normal:'처음이라면 이것 · 적이 몸을 사리며 싸웁니다',easy:'연습용 · 적이 무리하게 돌격합니다','original-noguard':'원작 AI의 간이 사고 · 정령이 덜 정교하게 움직여 실력이 잘 통합니다 (어려움)',original:'원작 실행 파일의 AI · 마석을 집요하게 노립니다 (매우 어려움)'};
 function difficultyChips(){const cur=preferences.difficulty||'normal';return `<section class="difficulty-pick"><h3>난이도 <small>다음 전투부터 적용</small></h3><div class="chips">${DIFFICULTIES.map(([id,label])=>`<button type="button" data-difficulty="${id}" aria-pressed="${cur===id}">${esc(label.split(' · ')[0])}</button>`).join('')}</div><p>${esc(DIFFICULTY_NOTES[cur]||'')}</p></section>`;}
 function bindDifficultyChips(root=content){root.querySelectorAll('[data-difficulty]').forEach(btn=>btn.onclick=()=>{preferences.difficulty=btn.dataset.difficulty;write('preferences',preferences);const box=btn.closest('.difficulty-pick');box.outerHTML=difficultyChips();bindDifficultyChips(root);const sel=$('#difficulty');if(sel)sel.value=preferences.difficulty;});}
 // Difficulty choices. 'original' = the vmv2.exe AI (candidate pruning + rollouts, docs/reviews/claude-20261025-c7e2a9-ai-original.md).
-const DIFFICULTIES=[['normal','기본 · 생존 우선'],['easy','연습 · 적극 돌격'],['original','원작 AI (표준 사고) · 매우 어려움']];
+const DIFFICULTIES=[['easy','연습 · 적극 돌격'],['normal','기본 · 생존 우선'],['original-noguard','원작 AI (간이 사고) · 어려움'],['original','원작 AI (표준 사고) · 매우 어려움']];
 // Phones cap the original AI's candidate lists (24/8 instead of 96/32) — a recorded deviation from the original, for speed.
 function phoneAILimits(){return mobileUI.active?{masterCandidates:24,natialCandidates:8}:null;}
 function withPhoneLimits(fn){const lim=phoneAILimits();if(!lim||!battle.difficulty?.startsWith('original'))return fn();const prev=battle.custom?.aiLimits;battle.custom={...battle.custom,aiLimits:lim};try{return fn();}finally{if(prev===undefined)delete battle.custom.aiLimits;else battle.custom.aiLimits=prev;}}
