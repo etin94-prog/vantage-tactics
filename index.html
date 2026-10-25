@@ -473,8 +473,8 @@
 .title-toggles{display:flex;gap:8px}.title-toggles button{flex:1;min-height:46px;border-radius:12px;font-size:14px;background:#22392d}
 .title-toggles button[aria-pressed="true"]{background:#3f5536;border-color:#d4dfaa;color:#eef6d6}
 @media(max-width:620px){.title-screen{padding:24px 16px 18px}.title-logo h1{font-size:27px;letter-spacing:3px}}
-#main-dialog:has(.title-screen){inset:0;width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;margin:0;border:0;border-radius:0;background:radial-gradient(ellipse at 50% 28%,#3d5238 0%,#1d2c24 55%,#111b17 100%);display:flex;align-items:center;justify-content:center;overflow:auto}
-#main-dialog:has(.title-screen) .title-screen{width:100%;padding-bottom:max(22px,env(safe-area-inset-bottom))}
+#main-dialog[open]:has(.title-screen){inset:0;width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;margin:0;border:0;border-radius:0;background:radial-gradient(ellipse at 50% 28%,#3d5238 0%,#1d2c24 55%,#111b17 100%);display:flex;align-items:center;justify-content:center;overflow:auto}
+#main-dialog[open]:has(.title-screen) .title-screen{width:100%;padding-bottom:max(22px,env(safe-area-inset-bottom))}
 </style></head>
 <body>
 <div class="app">
