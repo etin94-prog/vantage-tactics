@@ -243,6 +243,10 @@ const ORIGINAL_AI={limits:{masterCandidates:96,natialCandidates:32,rolloutTurns:
   stoneNeutral:10000,stoneEnemy:13333,stoneEnemyPerDist:666,masterWorth:2500,ownMasterFactor:4,stayPercent:25,stayFlat:4,rolloutMasterMove:-25000,
   compressAbove:60000,mpPerCost:-120,mpPerUpkeep:-300,mpNoIncome:-100000,fieldSpellBase:-10000,
   pruneStone:5000,pruneHeight:8,pruneTerrain:10,pruneCurrent:5000,pruneNearMaster:3000,pruneOdd:36,duplicateDecay:[256,218,185,157,134,114,97,82,70,59,50,43]};
+// 'easy' difficulty handicaps over the 'normal' AI, tuned with the lab novice policy (30 stages x 10 seeds: 75% -> 96% wins):
+// maxNatials = natial cap (normal: LIMITS.maxSummons); masterHunts:false = the master does not move toward attack positions,
+// it still attacks what is already in reach; counterPick:false = summons ignore the element that beats the nearest enemy natial.
+const EASY_AI={maxNatials:2,masterHunts:false,counterPick:false};
 class Battle {
   constructor(stage,masterId='fighter',options={}) {
     this.stage=structuredClone(validateStage(stage));this.tiles=new Map(this.stage.tiles.map(t=>[key(t),t]));
@@ -443,18 +447,20 @@ class Battle {
       }if(best){this.cast(best.s.id,best.p);return true;}return false;};
     let targets=enemies.filter(t=>this.canAttack(u,t));const kill=targets.find(t=>t.master&&this.damage(u,t,u.magicAttackBasic).amount>=t.hp);if(kill){this.attack(kill.id);return;}
     if(u.hp<=4&&tryMagic())return;
+    // 'easy' (all-modes report 2026-10-28 measured it equal to normal): AI-only handicaps from EASY_AI. Rules and numbers are untouched.
+    const easy=this.difficulty==='easy';
     const capturable=this.stones.filter(s=>s.owner!==u.team&&!this.at(s)).sort((a,b)=>distance(u,a)-distance(u,b));let goal=capturable[0];const nearest=enemies.sort((a,b)=>distance(u,a)-distance(u,b))[0];if(!goal||!u.master&&nearest&&distance(u,nearest)<u.move+u.range)goal=nearest||this.living.find(t=>t.master&&t.team!==u.team);
     if(!this.moved&&goal){const reach=this.reachable(u),blocked=this.blocked(u);blocked.delete(key(goal));const path=findPath(u,goal,this.tiles,this.terrainCost(u),blocked);let best=null,bestScore=-Infinity;
       for(const [k,cost] of reach.dist){if(k===key(u))continue;const p=this.tiles.get(k),proxy={...u,q:p.q,r:p.r};let score=-distance(p,goal)*2-cost*.15;const routeIndex=path.findIndex(t=>key(t)===k);if(routeIndex>0)score+=routeIndex*.6;
         if(this.stones.some(s=>s.owner!==u.team&&key(s)===k))score+=26;
-        for(const t of enemies)if(this.canAttack(proxy,t))score=Math.max(score,10+this.damage(proxy,t,u.magicAttackBasic).amount+(t.master?12:0));
+        if(!easy||!u.master||EASY_AI.masterHunts)for(const t of enemies)if(this.canAttack(proxy,t))score=Math.max(score,10+this.damage(proxy,t,u.magicAttackBasic).amount+(t.master?12:0));
         if(u.master&&u.hp<=4&&this.difficulty!=='easy')score-=enemies.reduce((sum,t)=>sum+this.threatDamage(t,proxy),0)*3;
         if(['lava','swamp'].includes(p.terrain)&&u.element!=='fire'&&!u.flying)score-=10;
         if(score>bestScore||score===bestScore&&originalPositionPreference(p)>originalPositionPreference(best)){bestScore=score;best=p;}
       }if(best&&(!targets.length||bestScore>20))this.move(best);
     }
     if(tryMagic())return;targets=enemies.filter(t=>this.canAttack(u,t)&&Number.isFinite(this.attackScore(u,t))).sort((a,b)=>this.attackScore(u,b)-this.attackScore(u,a)||a.id-b.id);if(targets.length){this.attack(targets[0].id);return;}
-    if(u.master){const nearestSpirit=enemies.find(t=>!t.master)||nearest,desired=Object.keys(ELEMENTS).find(e=>ELEMENTS[e].beats===nearestSpirit?.element);const options=SUMMONS.filter(s=>this.canSummon(s.id,u)&&s.upkeep<=Math.max(1,this.income(u.team)-this.upkeep(u.team))).sort((a,b)=>(b.element===desired?8:0)+b.cost/12-((a.element===desired?8:0)+a.cost/12));
+    if(u.master){const counterBonus=easy&&!EASY_AI.counterPick?0:8,nearestSpirit=enemies.find(t=>!t.master)||nearest,desired=Object.keys(ELEMENTS).find(e=>ELEMENTS[e].beats===nearestSpirit?.element);const options=easy&&this.living.filter(x=>x.team===u.team&&!x.master).length>=EASY_AI.maxNatials?[]:SUMMONS.filter(s=>this.canSummon(s.id,u)&&s.upkeep<=Math.max(1,this.income(u.team)-this.upkeep(u.team))).sort((a,b)=>(b.element===desired?counterBonus:0)+b.cost/12-((a.element===desired?counterBonus:0)+a.cost/12));
       let count=0;const cheapest=Math.min(...options.map(s=>s.cost));for(const type of options){if(u.type==='gid-kahn'&&count===0&&this.mana[u.team]>=cheapest*2&&type.cost+cheapest>this.mana[u.team])continue;const places=this.summonTiles(u,type.id).sort((a,b)=>{const value=p=>(this.stones.some(s=>s.owner!==u.team&&key(s)===key(p))?-100:0)+distance(p,goal||u);return value(a)-value(b);});if(places.length&&this.canSummon(type.id,u)){this.summon(type.id,places[0],false);if(++count>=(u.type==='gid-kahn'?2:1))break;}}
       if(count){this.finish('summon');return;}
     }this.wait();
@@ -501,8 +507,10 @@ class Battle {
     if(!u.healerOnly&&!u.isDecoy)for(const t of units){if(t.team===team||distance(p,t)>u.range+2||!this.canAttack(proxy,t))continue;
       const d=this.damage({...proxy,facing:direction(p,t)},t,u.magicAttackBasic).amount,v=this.aiHpValue(team,t,d,this.aiWorth(t,team));
       if(v>best.value)best={value:v,act:{type:'attack',target:t.id}};}
+    // Trajectory-5 (field) actions such as Bless are not per-tile candidates: 0x449b05 returns -2e9 for them, so they never
+    // compete here or inside rollouts; aiPlanOriginal evaluates them separately (bless-frequency report 2026-10-28).
     if(!this.hasStatus(u,'silence'))for(const s of this.availableSpells(u)){
-      if(this.mana[team]<s.cost||!['damage','heal','status','cleanse'].includes(s.kind))continue;
+      if(this.mana[team]<s.cost||s.trajectory===5||!['damage','heal','status','cleanse'].includes(s.kind))continue;
       const centres=s.selfArea||s.allAllies||s.range===0?[p]:units.filter(t=>distance(p,t)<=(s.range||0)+1).map(t=>this.tiles.get(key(t)));
       for(const c of centres){if(!c||c!==p&&!(s.sourceIndex!==undefined?this.actionInRange(proxy,c,s):distance(proxy,c)<=s.range))continue;
         let v=this.aiMpValue(team,s.cost);
@@ -574,7 +582,12 @@ class Battle {
     for(const c of cands)consider(this.aiPlanOf(u,c),c.base);
     if(u.master&&!this.moved&&this.stage.tideAI&&!this.hasStatus(u,'silence'))for(const s of this.availableSpells(u).filter(s=>s.kind==='tide'&&this.mana[u.team]>=s.cost))
       consider([{type:'cast',spell:s.id,q:u.q,r:u.r}],this.aiMpValue(u.team,s.cost)+ORIGINAL_AI.fieldSpellBase);
-    const top=cands[0];if(top.act.type!=='wait'&&top.base<2000)consider(this.aiPlanOf(u,{...top,act:{type:'wait'}}),0);
+    const top=cands[0];
+    // Field heal (Bless) post-step of 0x446434: from the top candidate tile, base 0x449e53 = MP value - 10000 + sum of ally
+    // healing values; skipped when nothing would be healed. Unlike tide there is no map flag or before-move condition.
+    if(!this.hasStatus(u,'silence'))for(const s of this.availableSpells(u).filter(s=>s.trajectory===5&&s.kind==='heal'&&this.mana[u.team]>=s.cost)){
+      const heal=this.affected(u,s,top.p).reduce((n,t)=>t.isDecoy?n:n+this.aiHpValue(u.team,t,-this.healing(u,s),this.aiWorth(t,u.team)),0);
+      if(heal>0)consider(this.aiPlanOf(u,{...top,act:{type:'cast',spell:s.id,q:top.p.q,r:top.p.r}}),this.aiMpValue(u.team,s.cost)+ORIGINAL_AI.fieldSpellBase+heal);}if(top.act.type!=='wait'&&top.base<2000)consider(this.aiPlanOf(u,{...top,act:{type:'wait'}}),0);
     return best.plan;}
   aiTurnOriginal(){if(!this.active||this.winner!==null)return;this.aiExecute(this.aiPlanOriginal());}
   serialize(){return {version:5,stage:this.stage,tide:this.tide,units:this.units,stones:this.stones,mana:this.mana,time:this.time,turn:this.turn,round:this.round,nextId:this.nextId,activeId:this.activeId,winner:this.winner,log:this.log,moved:this.moved,moveCost:this.moveCost,moveUndo:this.moveUndo??null,difficulty:this.difficulty,custom:this.custom,traps:this.traps,unlocked:this.unlocked,extraSpells:this.extraSpells};}

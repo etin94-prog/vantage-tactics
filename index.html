@@ -761,6 +761,10 @@ const ORIGINAL_AI={limits:{masterCandidates:96,natialCandidates:32,rolloutTurns:
   stoneNeutral:10000,stoneEnemy:13333,stoneEnemyPerDist:666,masterWorth:2500,ownMasterFactor:4,stayPercent:25,stayFlat:4,rolloutMasterMove:-25000,
   compressAbove:60000,mpPerCost:-120,mpPerUpkeep:-300,mpNoIncome:-100000,fieldSpellBase:-10000,
   pruneStone:5000,pruneHeight:8,pruneTerrain:10,pruneCurrent:5000,pruneNearMaster:3000,pruneOdd:36,duplicateDecay:[256,218,185,157,134,114,97,82,70,59,50,43]};
+// 'easy' difficulty handicaps over the 'normal' AI, tuned with the lab novice policy (30 stages x 10 seeds: 75% -> 96% wins):
+// maxNatials = natial cap (normal: LIMITS.maxSummons); masterHunts:false = the master does not move toward attack positions,
+// it still attacks what is already in reach; counterPick:false = summons ignore the element that beats the nearest enemy natial.
+const EASY_AI={maxNatials:2,masterHunts:false,counterPick:false};
 class Battle {
   constructor(stage,masterId='fighter',options={}) {
     this.stage=structuredClone(validateStage(stage));this.tiles=new Map(this.stage.tiles.map(t=>[key(t),t]));
@@ -961,18 +965,20 @@ class Battle {
       }if(best){this.cast(best.s.id,best.p);return true;}return false;};
     let targets=enemies.filter(t=>this.canAttack(u,t));const kill=targets.find(t=>t.master&&this.damage(u,t,u.magicAttackBasic).amount>=t.hp);if(kill){this.attack(kill.id);return;}
     if(u.hp<=4&&tryMagic())return;
+    // 'easy' (all-modes report 2026-10-28 measured it equal to normal): AI-only handicaps from EASY_AI. Rules and numbers are untouched.
+    const easy=this.difficulty==='easy';
     const capturable=this.stones.filter(s=>s.owner!==u.team&&!this.at(s)).sort((a,b)=>distance(u,a)-distance(u,b));let goal=capturable[0];const nearest=enemies.sort((a,b)=>distance(u,a)-distance(u,b))[0];if(!goal||!u.master&&nearest&&distance(u,nearest)<u.move+u.range)goal=nearest||this.living.find(t=>t.master&&t.team!==u.team);
     if(!this.moved&&goal){const reach=this.reachable(u),blocked=this.blocked(u);blocked.delete(key(goal));const path=findPath(u,goal,this.tiles,this.terrainCost(u),blocked);let best=null,bestScore=-Infinity;
       for(const [k,cost] of reach.dist){if(k===key(u))continue;const p=this.tiles.get(k),proxy={...u,q:p.q,r:p.r};let score=-distance(p,goal)*2-cost*.15;const routeIndex=path.findIndex(t=>key(t)===k);if(routeIndex>0)score+=routeIndex*.6;
         if(this.stones.some(s=>s.owner!==u.team&&key(s)===k))score+=26;
-        for(const t of enemies)if(this.canAttack(proxy,t))score=Math.max(score,10+this.damage(proxy,t,u.magicAttackBasic).amount+(t.master?12:0));
+        if(!easy||!u.master||EASY_AI.masterHunts)for(const t of enemies)if(this.canAttack(proxy,t))score=Math.max(score,10+this.damage(proxy,t,u.magicAttackBasic).amount+(t.master?12:0));
         if(u.master&&u.hp<=4&&this.difficulty!=='easy')score-=enemies.reduce((sum,t)=>sum+this.threatDamage(t,proxy),0)*3;
         if(['lava','swamp'].includes(p.terrain)&&u.element!=='fire'&&!u.flying)score-=10;
         if(score>bestScore||score===bestScore&&originalPositionPreference(p)>originalPositionPreference(best)){bestScore=score;best=p;}
       }if(best&&(!targets.length||bestScore>20))this.move(best);
     }
     if(tryMagic())return;targets=enemies.filter(t=>this.canAttack(u,t)&&Number.isFinite(this.attackScore(u,t))).sort((a,b)=>this.attackScore(u,b)-this.attackScore(u,a)||a.id-b.id);if(targets.length){this.attack(targets[0].id);return;}
-    if(u.master){const nearestSpirit=enemies.find(t=>!t.master)||nearest,desired=Object.keys(ELEMENTS).find(e=>ELEMENTS[e].beats===nearestSpirit?.element);const options=SUMMONS.filter(s=>this.canSummon(s.id,u)&&s.upkeep<=Math.max(1,this.income(u.team)-this.upkeep(u.team))).sort((a,b)=>(b.element===desired?8:0)+b.cost/12-((a.element===desired?8:0)+a.cost/12));
+    if(u.master){const counterBonus=easy&&!EASY_AI.counterPick?0:8,nearestSpirit=enemies.find(t=>!t.master)||nearest,desired=Object.keys(ELEMENTS).find(e=>ELEMENTS[e].beats===nearestSpirit?.element);const options=easy&&this.living.filter(x=>x.team===u.team&&!x.master).length>=EASY_AI.maxNatials?[]:SUMMONS.filter(s=>this.canSummon(s.id,u)&&s.upkeep<=Math.max(1,this.income(u.team)-this.upkeep(u.team))).sort((a,b)=>(b.element===desired?counterBonus:0)+b.cost/12-((a.element===desired?counterBonus:0)+a.cost/12));
       let count=0;const cheapest=Math.min(...options.map(s=>s.cost));for(const type of options){if(u.type==='gid-kahn'&&count===0&&this.mana[u.team]>=cheapest*2&&type.cost+cheapest>this.mana[u.team])continue;const places=this.summonTiles(u,type.id).sort((a,b)=>{const value=p=>(this.stones.some(s=>s.owner!==u.team&&key(s)===key(p))?-100:0)+distance(p,goal||u);return value(a)-value(b);});if(places.length&&this.canSummon(type.id,u)){this.summon(type.id,places[0],false);if(++count>=(u.type==='gid-kahn'?2:1))break;}}
       if(count){this.finish('summon');return;}
     }this.wait();
@@ -1019,8 +1025,10 @@ class Battle {
     if(!u.healerOnly&&!u.isDecoy)for(const t of units){if(t.team===team||distance(p,t)>u.range+2||!this.canAttack(proxy,t))continue;
       const d=this.damage({...proxy,facing:direction(p,t)},t,u.magicAttackBasic).amount,v=this.aiHpValue(team,t,d,this.aiWorth(t,team));
       if(v>best.value)best={value:v,act:{type:'attack',target:t.id}};}
+    // Trajectory-5 (field) actions such as Bless are not per-tile candidates: 0x449b05 returns -2e9 for them, so they never
+    // compete here or inside rollouts; aiPlanOriginal evaluates them separately (bless-frequency report 2026-10-28).
     if(!this.hasStatus(u,'silence'))for(const s of this.availableSpells(u)){
-      if(this.mana[team]<s.cost||!['damage','heal','status','cleanse'].includes(s.kind))continue;
+      if(this.mana[team]<s.cost||s.trajectory===5||!['damage','heal','status','cleanse'].includes(s.kind))continue;
       const centres=s.selfArea||s.allAllies||s.range===0?[p]:units.filter(t=>distance(p,t)<=(s.range||0)+1).map(t=>this.tiles.get(key(t)));
       for(const c of centres){if(!c||c!==p&&!(s.sourceIndex!==undefined?this.actionInRange(proxy,c,s):distance(proxy,c)<=s.range))continue;
         let v=this.aiMpValue(team,s.cost);
@@ -1092,7 +1100,12 @@ class Battle {
     for(const c of cands)consider(this.aiPlanOf(u,c),c.base);
     if(u.master&&!this.moved&&this.stage.tideAI&&!this.hasStatus(u,'silence'))for(const s of this.availableSpells(u).filter(s=>s.kind==='tide'&&this.mana[u.team]>=s.cost))
       consider([{type:'cast',spell:s.id,q:u.q,r:u.r}],this.aiMpValue(u.team,s.cost)+ORIGINAL_AI.fieldSpellBase);
-    const top=cands[0];if(top.act.type!=='wait'&&top.base<2000)consider(this.aiPlanOf(u,{...top,act:{type:'wait'}}),0);
+    const top=cands[0];
+    // Field heal (Bless) post-step of 0x446434: from the top candidate tile, base 0x449e53 = MP value - 10000 + sum of ally
+    // healing values; skipped when nothing would be healed. Unlike tide there is no map flag or before-move condition.
+    if(!this.hasStatus(u,'silence'))for(const s of this.availableSpells(u).filter(s=>s.trajectory===5&&s.kind==='heal'&&this.mana[u.team]>=s.cost)){
+      const heal=this.affected(u,s,top.p).reduce((n,t)=>t.isDecoy?n:n+this.aiHpValue(u.team,t,-this.healing(u,s),this.aiWorth(t,u.team)),0);
+      if(heal>0)consider(this.aiPlanOf(u,{...top,act:{type:'cast',spell:s.id,q:top.p.q,r:top.p.r}}),this.aiMpValue(u.team,s.cost)+ORIGINAL_AI.fieldSpellBase+heal);}if(top.act.type!=='wait'&&top.base<2000)consider(this.aiPlanOf(u,{...top,act:{type:'wait'}}),0);
     return best.plan;}
   aiTurnOriginal(){if(!this.active||this.winner!==null)return;this.aiExecute(this.aiPlanOriginal());}
   serialize(){return {version:5,stage:this.stage,tide:this.tide,units:this.units,stones:this.stones,mana:this.mana,time:this.time,turn:this.turn,round:this.round,nextId:this.nextId,activeId:this.activeId,winner:this.winner,log:this.log,moved:this.moved,moveCost:this.moveCost,moveUndo:this.moveUndo??null,difficulty:this.difficulty,custom:this.custom,traps:this.traps,unlocked:this.unlocked,extraSpells:this.extraSpells};}
@@ -1879,11 +1892,15 @@ function observeUnit(u){observing=true;hideWheel();clearAim();selectedId=u.id;$(
 function exitObserve(){if(!observing)return;observing=false;$('#range-subject').value='active';$('#range-view').value='auto';selectedId=battle.activeId;renderUnit();highlights();}
 function openMenuAfterMove(){if(!menuAfterMove||renderer.isPlaying())return;menuAfterMove=false;const u=battle.active;if(u?.team===0&&battle.moved&&battle.winner===null&&!dialog.open)showWheel(u);}
 // Difficulty chips shown where a new battle is chosen (first screen, campaign, settings); applies from the next battle.
-const DIFFICULTY_NOTES={normal:'처음이라면 이것 · 적이 몸을 사리며 싸웁니다',easy:'연습용 · 적이 무리하게 돌격합니다','original-noguard':'원작 AI의 간이 사고 · 정령이 덜 정교하게 움직여 실력이 잘 통합니다 (어려움)',original:'원작 실행 파일의 AI · 마석을 집요하게 노립니다 (매우 어려움)'};
+// Expected win rates come from docs/reviews/claude-20261028-c7e2a9-all-modes.md (lab policies, 30 stages x 10 seeds);
+// the two original-AI rates were re-measured after the Bless fix (section 11).
+const DIFFICULTY_NOTES={normal:'게임에 익숙해졌다면 · 적이 마석을 다투며 싸웁니다 (예상 승률 초보 75% · 숙련 86%)',easy:'처음 해 본다면 · 적은 정령을 2기까지만 부르고 상성을 따지지 않으며, 소환사가 먼저 나서지 않습니다 (예상 승률 초보 96%)','original-noguard':'원작 AI의 간이 사고 · 실력이 잘 통합니다 (예상 승률 숙련 약 55~60% · 초보 약 20%)',original:'원작 실행 파일의 AI · 마석을 집요하게 노립니다 (예상 승률 숙련 약 35~40% · 21~30전장은 숙련자도 약 12%)'};
+// Briefing hints only for stage elements the all-modes and factor-removal measurements found repeatedly (report section 2).
+const STAGE_HINTS={2:'상성이 잘 통하는 전장입니다 · 소환 목록의 상성 표시를 보고 부르세요',7:'상성이 승패를 가릅니다 · 적 정령에 강한 속성으로 맞서세요',11:'마석 다툼보다 상대 소환사를 빨리 노리는 쪽이 잘 통했습니다',12:'마석 수입 경쟁입니다 · 마석을 먼저 많이 차지하세요',21:'마석이 승패를 가릅니다 · 마석을 빼앗기지 마세요',22:'상성이 잘 통하는 전장입니다 · 소환 목록의 상성 표시를 보고 부르세요',24:'가장 어려운 전장입니다 · 원작에서도 오래 걸린 곳이니 서두르지 마세요',25:'상대 소환사를 빨리 노리는 돌격이 잘 통했습니다'};
 function difficultyChips(){const cur=preferences.difficulty||'normal';return `<section class="difficulty-pick"><h3>난이도 <small>다음 전투부터 적용</small></h3><div class="chips">${DIFFICULTIES.map(([id,label])=>`<button type="button" data-difficulty="${id}" aria-pressed="${cur===id}">${esc(label.split(' · ')[0])}</button>`).join('')}</div><p>${esc(DIFFICULTY_NOTES[cur]||'')}</p></section>`;}
 function bindDifficultyChips(root=content){root.querySelectorAll('[data-difficulty]').forEach(btn=>btn.onclick=()=>{preferences.difficulty=btn.dataset.difficulty;write('preferences',preferences);const box=btn.closest('.difficulty-pick');box.outerHTML=difficultyChips();bindDifficultyChips(root);const sel=$('#difficulty');if(sel)sel.value=preferences.difficulty;});}
 // Difficulty choices. 'original' = the vmv2.exe AI (candidate pruning + rollouts, docs/reviews/claude-20261025-c7e2a9-ai-original.md).
-const DIFFICULTIES=[['easy','연습 · 적극 돌격'],['normal','기본 · 생존 우선'],['original-noguard','원작 AI (간이 사고) · 어려움'],['original','원작 AI (표준 사고) · 매우 어려움']];
+const DIFFICULTIES=[['easy','연습 · 느슨한 상대'],['normal','기본 · 생존 우선'],['original-noguard','원작 AI (간이 사고) · 어려움'],['original','원작 AI (표준 사고) · 매우 어려움']];
 // Phones cap the original AI's candidate lists (24/8 instead of 96/32) — a recorded deviation from the original, for speed.
 function phoneAILimits(){return mobileUI.active?{masterCandidates:24,natialCandidates:8}:null;}
 function withPhoneLimits(fn){const lim=phoneAILimits();if(!lim||!battle.difficulty?.startsWith('original'))return fn();const prev=battle.custom?.aiLimits;battle.custom={...battle.custom,aiLimits:lim};try{return fn();}finally{if(prev===undefined)delete battle.custom.aiLimits;else battle.custom.aiLimits=prev;}}
@@ -1916,7 +1933,7 @@ function dangerTiles(){const stamp=`${battle.turn}|${battle.time}|${battle.livin
 function syncDanger(){const btn=$('#danger-btn');if(btn){btn.setAttribute('aria-pressed',String(dangerOn));btn.classList.toggle('on',dangerOn);}renderer.dangerArea=dangerOn&&battle?dangerTiles():null;}
 // A5: a short briefing whenever a new battle starts (objective, opponents, what is on this field).
 function showBriefing(){const st=battle.stage,foes=battle.units.filter(u=>u.team===1&&u.master),counts=new Map();for(const t of st.tiles){if(t.terrain==='void')continue;const n=ruleTerrain(t)===6?'부유 발판':TERRAIN[t.terrain]?.name;if(n)counts.set(n,(counts.get(n)||0)+1);}const terrains=[...counts].sort((a,b)=>b[1]-a[1]).slice(0,4).map(([n])=>n).join(' · '),m=battle.clockMinutes(),period=({morning:'아침',day:'낮',evening:'저녁',night:'밤'})[battle.period()],features=[`마석 ${st.manaStones.length}개`,st.portals?.length?`포탈 ${st.portals.length}쌍`:'',st.fixedBrightness!==undefined?'명암 고정':''].filter(Boolean).join(' · ');
-  showModal(`${modalHead(esc(stageLabel()),esc(st.description||'정령을 소환하고 상대 소환사를 제압하세요.'),'작전 브리핑')}<div class="modal-body briefing"><section><h3>승리 조건</h3><p>적 소환사 ${foes.length}명을 모두 쓰러뜨리면 승리 · 내 소환사가 쓰러지면 패배</p></section><section><h3>상대 · ${esc((DIFFICULTIES.find(d=>d[0]===battle.difficulty)||DIFFICULTIES[0])[1])}</h3><p>${foes.map(f=>`${ELEMENTS[f.element]?`<span style="color:${ELEMENTS[f.element].color}">${ELEMENTS[f.element].glyph}</span> `:''}${esc(f.name)} · HP ${f.maxHp}`).join('<br>')}</p></section><section><h3>전장</h3><p>${esc(terrains)}<br>${esc(features)}<br>시작 ${String(Math.floor(m/60)%24).padStart(2,'0')}:${String(m%60).padStart(2,'0')} · ${period}</p></section><section><h3>내 준비</h3><p>MP <b class="mp-inline">◆${battle.mana[0]}</b> · 소환 가능한 정령 ${battle.unlocked.length}종 · 정산마다 +${battle.income(0)}</p></section></div><div class="modal-footer"><p>승리 조건과 MP 정산은 '전황'에서도 볼 수 있습니다.</p><button class="primary" data-close>전투 시작</button></div>`);}
+  showModal(`${modalHead(esc(stageLabel()),esc(st.description||'정령을 소환하고 상대 소환사를 제압하세요.'),'작전 브리핑')}<div class="modal-body briefing"><section><h3>승리 조건</h3><p>적 소환사 ${foes.length}명을 모두 쓰러뜨리면 승리 · 내 소환사가 쓰러지면 패배</p></section><section><h3>상대 · ${esc((DIFFICULTIES.find(d=>d[0]===battle.difficulty)||DIFFICULTIES[0])[1])}</h3><p>${foes.map(f=>`${ELEMENTS[f.element]?`<span style="color:${ELEMENTS[f.element].color}">${ELEMENTS[f.element].glyph}</span> `:''}${esc(f.name)} · HP ${f.maxHp}`).join('<br>')}</p></section><section><h3>전장</h3><p>${esc(terrains)}<br>${esc(features)}<br>시작 ${String(Math.floor(m/60)%24).padStart(2,'0')}:${String(m%60).padStart(2,'0')} · ${period}</p></section>${!st.custom&&STAGE_HINTS[st.id]?`<section><h3>공략 힌트</h3><p>${esc(STAGE_HINTS[st.id])}</p></section>`:''}<section><h3>내 준비</h3><p>MP <b class="mp-inline">◆${battle.mana[0]}</b> · 소환 가능한 정령 ${battle.unlocked.length}종 · 정산마다 +${battle.income(0)}</p></section></div><div class="modal-footer"><p>승리 조건과 MP 정산은 '전황'에서도 볼 수 있습니다.</p><button class="primary" data-close>전투 시작</button></div>`);}
 // MP is the summoning budget: float the change (+income / −cost) over the top-bar gauge, never on battle load.
 let manaSeen=null;
 function showManaDelta(){const now=battle.mana[0],prev=manaSeen?.battle===battle?manaSeen.value:null;manaSeen={battle,value:now};if(prev===null||prev===now)return;const slot=$('#mobile-resource-slot');if(!slot)return;const el=document.createElement('span');el.className=`mp-delta ${now>prev?'up':'down'}`;el.textContent=`${now>prev?'+':'−'}${Math.abs(now-prev)}`;slot.append(el);setTimeout(()=>el.remove(),1400);}
