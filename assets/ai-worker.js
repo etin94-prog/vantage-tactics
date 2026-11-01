@@ -480,13 +480,19 @@ class Battle {
     return (v*2/3+v*dist*actionMinutes(x.speed,0,true)/(Math.max(1,x.move)*270))*this.aiEcon(side)/256*(1<<Math.max(0,(x.level||1)-1));}
   aiStatusLeft(t){return Object.values(t.statuses||{}).reduce((n,s)=>n+(s.expiresAt!==undefined?Math.max(0,s.expiresAt-this.time):(s.remaining||0)*30),0);}
   // HP change value (0x44af92): d>0 damage, d<0 healing; lethal counts HP+20 (master) / HP+3 (natial); own side negated.
+  // Healing uses the HP before healing as denominator (gap audit 2026-10-31, 1.5).
   aiHpValue(team,t,d,w){if(!d)return 0;const after=Math.max(0,Math.min(t.maxHp,t.hp-d));let dd=t.hp-after;if(!dd)return 0;if(dd>0&&after===0)dd=t.hp+(t.master?20:3);
-    const v=dd*w*15/(after+5)*30/(this.aiStatusLeft(t)+30);return t.team===team?-v:v;}
-  aiMpValue(team,cost,extraUpkeep=0){const net=this.income(team)-this.upkeep(team)-extraUpkeep;if(net<=0)return ORIGINAL_AI.mpNoIncome;
+    const v=dd*w*15/((dd<0?t.hp:after)+5)*30/(this.aiStatusLeft(t)+30);return t.team===team?-v:v;}
+  // MP value (0x44b616): k = shortfall below reserve A divided by net income with integer division (no penalty while the
+  // shortfall is under one income), plus a square term once MP drops under the natial-spell reserve B, growing toward the
+  // next settlement (gap audit 2026-10-31, 1.1).
+  aiMpValue(team,cost,extraUpkeep=0){if(cost<1)return 0;const net=this.income(team)-this.upkeep(team)-extraUpkeep;if(net<=0)return ORIGINAL_AI.mpNoIncome;
     const own=this.living.filter(x=>(x.originalTeam??x.team)===team&&!x.master),spellSum=own.reduce((n,x)=>n+(x.spells||[]).reduce((k,id)=>k+(SPELLS[id]?.cost||0),0),0);
     const maxSummon=Math.max(0,...SUMMONS.filter(s=>this.unlockedFor({team},s)).map(s=>s.cost));
-    const reserve=Math.min(this.maxMana(team),maxSummon+spellSum),left=this.mana[team]-cost;let v=ORIGINAL_AI.mpPerUpkeep*extraUpkeep;
-    if(left<reserve)v+=ORIGINAL_AI.mpPerCost*cost*(reserve-left)/net;return v;}
+    const reserve=Math.min(this.maxMana(team),maxSummon+spellSum),left=this.mana[team]-cost,period=LIMITS.economyMinutes;
+    if(left>=reserve)return ORIGINAL_AI.mpPerUpkeep*extraUpkeep;let k=Math.trunc((reserve-left)/net);
+    if(left<spellSum)k+=Math.trunc((spellSum-left)*(spellSum-left)*(period-this.clockMinutes()%period)*25/(spellSum*30*spellSum));
+    return ORIGINAL_AI.mpPerCost*cost*k+ORIGINAL_AI.mpPerUpkeep*extraUpkeep;}
   aiStoneValue(team,p){const s=this.stones.find(x=>key(x)===key(p));if(!s||s.owner===team)return 0;if(s.owner===null)return ORIGINAL_AI.stoneNeutral;
     const m=this.living.find(x=>x.master&&x.team===s.owner);return ORIGINAL_AI.stoneEnemy+ORIGINAL_AI.stoneEnemyPerDist*(m?distance(m,p):0);}
   // Summon desirability (0x448bb3/0x4491d8, simplified): best expected hit of the new natial on each visible enemy, scaled by its worth,
@@ -557,12 +563,16 @@ class Battle {
     if(this.active?.id===u.id&&this.winner===null){this.aiFaceEnemies(u);this.wait();}return true;}
   // Rollout (0x44717e): play the plan on a copy, then every unit (both sides) acts by the same greedy mode-1 rule until the
   // horizon OA(SPD,moved,acted) clamped to [60 for masters, 120] minutes; scores weighted (192-192t/120)/256, opponents negated.
+  // Each turn first adds the turn-start terrain HP value (swamp +3, stone -1, unlandable +3), and opponent scores are negated
+  // before the 60000 compression so their big threats stay whole (gap audit 2026-10-31, 1.8).
   aiRollout(plan,u){const lim=this.aiLimits();let sim;try{sim=Battle.restore(this.serialize());}catch{return -Infinity;}sim.custom={...sim.custom,aiLimits:lim};
     sim.events=[];sim.log=[];sim.aiExecute(plan);
     const team=u.team,start=this.time,horizon=Math.min(ORIGINAL_AI.horizonMax,Math.max(u.master?ORIGINAL_AI.horizonMin:0,actionMinutes(u.speed,15,true)));let total=0,turns=0;
     while(sim.winner===null&&sim.active&&turns<lim.rolloutTurns){const a=sim.active,t=sim.time-start;if(t>horizon)break;turns++;
-      const w=Math.max(0,(192-192*t/120)/256),tiles=sim.aiTiles(a,1,null);let best=tiles[0];for(const c of tiles)if(c.score>best.score)best=c;
-      let s=best.score;if(s>ORIGINAL_AI.compressAbove)s=ORIGINAL_AI.compressAbove+(s-ORIGINAL_AI.compressAbove)/4;total+=(a.team===team?1:-1)*s*w;
+      const w=Math.max(0,(192-192*t/120)/256),tile=sim.tiles.get(key(a));
+      const d=(tile.terrain==='swamp'?3:0)-(sim.stones.some(s=>key(s)===key(a))?1:0)+(sim.canLand(a,tile)?0:3);if(d)total+=sim.aiHpValue(team,a,d,sim.aiWorth(a,team))*w;
+      const tiles=sim.aiTiles(a,1,null);let best=tiles[0];for(const c of tiles)if(c.score>best.score)best=c;
+      let s=(a.team===team?1:-1)*best.score;if(s>ORIGINAL_AI.compressAbove)s=ORIGINAL_AI.compressAbove+(s-ORIGINAL_AI.compressAbove)/4;total+=s*w;
       sim.aiExecute(sim.aiPlanOf(a,best));sim.events=[];sim.log=[];}
     if(sim.winner!==null)total+=(sim.winner===team?1:-1)*ORIGINAL_AI.instantBase;
     return total;}
@@ -572,22 +582,27 @@ class Battle {
     // with no pruning and no rollout; masters keep the Standard search (REA 1.9).
     if(this.difficulty==='original-noguard'&&!u.master){const tiles=this.aiTiles(u,0,null);let best=null,bv=-Infinity;for(const c of tiles){const v=c.score+Math.floor(rnd()*16);if(v>bv){bv=v;best=c;}}return best?this.aiPlanOf(u,best):[{type:'wait'}];}
     const own=this.living.find(x=>x.master&&x.team===u.team);
-    const cands=this.aiTiles(u,0,summon).map(c=>{const t=c.p,h=ruleHeight(t);
-      const key2=c.score+Math.floor(rnd()*16)+(this.stones.some(s=>key(s)===key(t))?ORIGINAL_AI.pruneStone:0)+h*ORIGINAL_AI.pruneHeight+(100-originalTerrainPercent(t))*ORIGINAL_AI.pruneTerrain
+    const cands=this.aiTiles(u,0,summon).map(c=>{const t=c.p,h=ruleHeight(t),noise=Math.floor(rnd()*16);
+      const key2=c.score+noise+(this.stones.some(s=>key(s)===key(t))?ORIGINAL_AI.pruneStone:0)+h*ORIGINAL_AI.pruneHeight+(100-originalTerrainPercent(t))*ORIGINAL_AI.pruneTerrain
         +(key(t)===here?ORIGINAL_AI.pruneCurrent:0)+(!u.master&&own&&distance(own,t)<2&&Math.abs(ruleHeight(this.tiles.get(key(own)))-h)<=2?ORIGINAL_AI.pruneNearMaster:0)+(((t.sourceX??t.q)&1)&&((t.sourceY??t.r)&1)?ORIGINAL_AI.pruneOdd:0);
-      return {...c,key:key2};}).sort((a,b)=>b.key-a.key||a.p.q-b.p.q||a.p.r-b.p.r).slice(0,u.master?lim.masterCandidates:lim.natialCandidates);
+      return {...c,key:key2,noise};}).sort((a,b)=>b.key-a.key||a.p.q-b.p.q||a.p.r-b.p.r).slice(0,u.master?lim.masterCandidates:lim.natialCandidates);
     if(!cands.length)return [{type:'wait'}];
     if(cands[0].base>=ORIGINAL_AI.instantBase||!lim.rollout)return this.aiPlanOf(u,cands[0]);
-    let best=null;const consider=(plan,base)=>{const total=base+this.aiRollout(plan,u);if(!best||total>best.total)best={plan,total};};
-    for(const c of cands)consider(this.aiPlanOf(u,c),c.base);
-    if(u.master&&!this.moved&&this.stage.tideAI&&!this.hasStatus(u,'silence'))for(const s of this.availableSpells(u).filter(s=>s.kind==='tide'&&this.mana[u.team]>=s.cost))
-      consider([{type:'cast',spell:s.id,q:u.q,r:u.r}],this.aiMpValue(u.team,s.cost)+ORIGINAL_AI.fieldSpellBase);
-    const top=cands[0];
-    // Field heal (Bless) post-step of 0x446434: from the top candidate tile, base 0x449e53 = MP value - 10000 + sum of ally
-    // healing values; skipped when nothing would be healed. Unlike tide there is no map flag or before-move condition.
-    if(!this.hasStatus(u,'silence'))for(const s of this.availableSpells(u).filter(s=>s.trajectory===5&&s.kind==='heal'&&this.mana[u.team]>=s.cost)){
-      const heal=this.affected(u,s,top.p).reduce((n,t)=>t.isDecoy?n:n+this.aiHpValue(u.team,t,-this.healing(u,s),this.aiWorth(t,u.team)),0);
-      if(heal>0)consider(this.aiPlanOf(u,{...top,act:{type:'cast',spell:s.id,q:top.p.q,r:top.p.r}}),this.aiMpValue(u.team,s.cost)+ORIGINAL_AI.fieldSpellBase+heal);}if(top.act.type!=='wait'&&top.base<2000)consider(this.aiPlanOf(u,{...top,act:{type:'wait'}}),0);
+    let best=null;const consider=(plan,base,meta)=>{const rollout=this.aiRollout(plan,u),total=base+rollout;if(!best||total>best.total)best={plan,total,rollout,...meta};};
+    // 0x446434: candidates compete with score + approach + the same rand(0..15) used for pruning, plus rollout (gap audit 1.2).
+    for(const c of cands)consider(this.aiPlanOf(u,c),c.score+c.noise,{c,kind:c.act.type});
+    // Post-steps are anchored on the best plan so far, re-scored as its action value + rollout (stone/stay/approach dropped).
+    const anchor=best.c;best.total=this.aiActionAt(u,anchor.p,summon).value+best.rollout;best.actionBase=best.total-best.rollout;
+    const field=(s,base)=>consider(this.aiPlanOf(u,{...anchor,act:{type:'cast',spell:s.id,q:anchor.p.q,r:anchor.p.r}}),base,{c:anchor,kind:'field',actionBase:base});
+    if(!this.hasStatus(u,'silence')){
+      // Tide: only the map flag gates it (no before-move condition), cast from the anchor tile.
+      if(u.master&&this.stage.tideAI)for(const s of this.availableSpells(u).filter(s=>s.kind==='tide'&&this.mana[u.team]>=s.cost))field(s,this.aiMpValue(u.team,s.cost)+ORIGINAL_AI.fieldSpellBase);
+      // Field heal (Bless), base 0x449e53 = MP value - 10000 + sum of ally healing values; skipped when nothing would be healed.
+      for(const s of this.availableSpells(u).filter(s=>s.trajectory===5&&s.kind==='heal'&&this.mana[u.team]>=s.cost)){
+        const heal=this.affected(u,s,anchor.p).reduce((n,t)=>t.isDecoy?n:n+this.aiHpValue(u.team,t,-this.healing(u,s),this.aiWorth(t,u.team)),0);
+        if(heal>0)field(s,this.aiMpValue(u.team,s.cost)+ORIGINAL_AI.fieldSpellBase+heal);}}
+    // Wait alternative only when the best is an attack or spell worth under 2000 (never for a summon).
+    if(['attack','cast','field'].includes(best.kind)&&best.actionBase<2000)consider(this.aiPlanOf(u,{...best.c,act:{type:'wait'}}),0,{c:best.c,kind:'wait',actionBase:0});
     return best.plan;}
   aiTurnOriginal(){if(!this.active||this.winner!==null)return;this.aiExecute(this.aiPlanOriginal());}
   serialize(){return {version:5,stage:this.stage,tide:this.tide,units:this.units,stones:this.stones,mana:this.mana,time:this.time,turn:this.turn,round:this.round,nextId:this.nextId,activeId:this.activeId,winner:this.winner,log:this.log,moved:this.moved,moveCost:this.moveCost,moveUndo:this.moveUndo??null,difficulty:this.difficulty,custom:this.custom,traps:this.traps,unlocked:this.unlocked,extraSpells:this.extraSpells};}
