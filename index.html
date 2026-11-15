@@ -1181,7 +1181,7 @@ const combatKeys={
   attack:[[0,0,0,1,1,0],[.16,-3,1,.97,1.025,-.025],[.28,-4,2,.96,1.03,-.04],[.375,12,-2,1.055,.97,.055],[.46,12,-2,1.055,.97,.055],[.65,5,0,1.015,.99,.02],[.84,-1,0,.995,1.005,-.008],[1,0,0,1,1,0]],
   cast:[[0,0,0,1,1,0],[.24,-1,-3,.98,1.02,-.015],[.48,3,-5,1.025,.98,.02],[.60,3,-4,1.02,.99,.015],[.82,0,-1,1,1,0],[1,0,0,1,1,0]]
 };
-// Sample by elapsed time, never by display frame count. Original pixels remain crisp;
+// Sample by elapsed time, never by display frame count. Original pixel blocks stay sharp (renderer sharp scaling);
 // the added in-between motion is a small foot-anchored transform, not ghosted images.
 function sampleCombatPose(state,progress,reduced=false){
   const t=Math.max(0,Math.min(1,progress)),keys=combatKeys[state];
@@ -1220,13 +1220,41 @@ function planPresentation(events,battle,now,rate=1){
   return planned.sort((a,b)=>a.start-b.start);
 }
 
+// Tiles travelled so far on a move cue. Trapezoid speed profile: the walker speeds up from rest and slows into the last tile,
+// with a constant pace in between (ramps shrink on long routes). Total time is unchanged.
+function moveTravel(event,now){
+  const path=event.path?.length>1?event.path:[event.from,event.to],L=Math.max(1,path.length-1);
+  const p=Math.max(0,Math.min(1,(now-event.start)/event.duration)),r=Math.min(.3,.45/L),v=1/(1-r);
+  const f=p<r?v*p*p/(2*r):p>1-r?1-v*(1-p)*(1-p)/(2*r):v*(p-r/2);
+  return Math.max(0,Math.min(L,f*L));
+}
+// Walk-cycle index for the original 3-pose sheets: contact pose on every tile centre, passing pose half way (one step per tile).
+function walkFrame(traveled){return Math.round(Math.max(0,traveled)*2);}
 function sampleMove(event,now,point,reduced=false){
   const path=event.path?.length>1?event.path:[event.from,event.to];
-  const progress=Math.max(0,Math.min(1,(now-event.start)/event.duration));
-  const step=Math.min(path.length-2,Math.floor(progress*(path.length-1))),fraction=progress===1?1:progress*(path.length-1)-step;
+  const progress=Math.max(0,Math.min(1,(now-event.start)/event.duration)),traveled=moveTravel(event,now);
+  const step=Math.min(path.length-2,Math.floor(traveled)),fraction=progress===1?1:Math.min(1,traveled-step);
   const from=path[step],to=path[step+1],a=point(from),b=point(to);
   const jump=to.warp||reduced,k=jump?(fraction<1?0:1):fraction;
-  return {x:a.x+(b.x-a.x)*k,y:a.y+(b.y-a.y)*k,cell:k<.5?from:to,from,to,moving:progress<1};
+  return {x:a.x+(b.x-a.x)*k,y:a.y+(b.y-a.y)*k,cell:k<.5?from:to,from,to,moving:progress<1,traveled};
+}
+
+// Hit reaction in ms at 1x: a short hit-stop shudder, then the body is shoved away, leans back, and settles.
+const HIT_TIMING={stop:60,total:COMBAT_TIMING.hit};
+function sampleHitPose(elapsed,reduced=false){
+  const rest={push:0,shudder:0,tilt:0,sx:1,sy:1};
+  if(reduced||!(elapsed>=0)||elapsed>=HIT_TIMING.total)return rest;
+  if(elapsed<HIT_TIMING.stop)return {...rest,shudder:elapsed<HIT_TIMING.stop/2?1.5:-1.5,sx:1.03,sy:.97};
+  const u=(elapsed-HIT_TIMING.stop)/(HIT_TIMING.total-HIT_TIMING.stop),k=u<.2?1-(1-u/.2)**2:(1-(u-.2)/.8)**2;
+  return {push:7*k,shudder:0,tilt:.09*k,sx:1+.04*k,sy:1-.05*k};
+}
+// Knock-out over the 'down' cue (progress 0..1): stagger, fall backwards and sink, then dissolve. Reduced motion only fades.
+function sampleDownPose(progress,reduced=false){
+  const t=Math.max(0,Math.min(1,progress)),s=x=>x*x*(3-2*x);
+  if(reduced)return {tilt:0,sink:0,sx:1,sy:1,alpha:1-t,flash:0,dissolve:0};
+  if(t<.12)return {tilt:.05*t/.12,sink:0,sx:1.03,sy:.97,alpha:1,flash:1-t/.12,dissolve:0};
+  if(t<.55){const k=s((t-.12)/.43);return {tilt:.05+.45*k,sink:6*k,sx:1+.02*k,sy:1-.1*k,alpha:1,flash:0,dissolve:0};}
+  const k=(t-.55)/.45;return {tilt:.5,sink:6+3*k,sx:1.02,sy:.9,alpha:1-s(k),flash:0,dissolve:k};
 }
 
 function overlaps(a,b,gap=3){return a.x<b.x+b.width+gap&&a.x+a.width+gap>b.x&&a.y<b.y+b.height+gap&&a.y+a.height+gap>b.y;}
@@ -1245,11 +1273,35 @@ const images=new Map(),portraits=new Map();
 function referenceSprite(u){return u.sprite?null:REFERENCE_MEDIA.sprites[u.type||u.id]?.[u.team===1?1:0];}
 function referenceFrame(u,state,frame){const direction=u.facing===undefined?5:(u.facing+3)%6,phase=state==='move'?[0,1,2,1][frame%4]:state==='attack'||state==='cast'?Math.min(2,Math.floor(frame/2)):0;return (state==='attack'?18:state==='cast'?36:0)+direction*3+phase;}
 function getImage(src){if(!src)return null;if(!images.has(src)){const img=new Image();img.onload=()=>window.dispatchEvent(new Event('sprite-ready'));img.src=src;images.set(src,img);}const img=images.get(src);return img.complete&&img.naturalWidth?img:null;}
-/** Original pixel silhouettes, painted on an integer grid. Sprite replacement is data-driven. */
+// Sharp scaling: each original 96px cell is enlarged by a whole number with nearest-neighbour (every source pixel becomes an equal
+// k x k block), then the GPU scales that block image the small remaining step with smoothing. At fractional zoom this avoids the
+// uneven 2px/3px pixel columns and the shimmer of plain nearest-neighbour, without blurring the art. Least recently used cells
+// are dropped past the pixel budget.
+const sheetIds=new WeakMap(),sharpCells=new Map(),SHARP_BUDGET=16e6;let sheetSeq=0,sharpPixels=0;
+function sharpFactor(device){return Math.max(1,Math.min(6,Math.ceil(device-.02)));}
+function sharpCell(img,f,k){
+  let id=sheetIds.get(img);if(id===undefined){id=++sheetSeq;sheetIds.set(img,id);}
+  const name=id+':'+f+':'+k;let cell=sharpCells.get(name);if(cell){sharpCells.delete(name);sharpCells.set(name,cell);return cell;}
+  if(typeof document==='undefined')return null;
+  cell=document.createElement('canvas');cell.width=cell.height=96*k;const g=cell.getContext('2d');g.imageSmoothingEnabled=false;g.drawImage(img,f%6*96,Math.floor(f/6)*96,96,96,0,0,96*k,96*k);
+  sharpCells.set(name,cell);sharpPixels+=cell.width*cell.height;
+  while(sharpPixels>SHARP_BUDGET&&sharpCells.size>1){const [old,o]=sharpCells.entries().next().value;sharpCells.delete(old);sharpPixels-=o.width*o.height;}
+  return cell;}
+function drawCell(ctx,img,f,x,y,size){
+  const m=ctx.getTransform?.(),device=m?Math.max(Math.hypot(m.a,m.b),Math.hypot(m.c,m.d))*size/96:size/96,k=sharpFactor(device),cell=sharpCell(img,f,k);
+  if(!cell){ctx.imageSmoothingEnabled=false;ctx.drawImage(img,f%6*96,Math.floor(f/6)*96,96,96,x,y,size,size);return;}
+  ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='low';ctx.drawImage(cell,0,0,cell.width,cell.height,x,y,size,size);}
+/** Original pixel silhouettes with sharp scaling. animation.pose {tilt,sx,sy} is a screen-space, foot-anchored transform
+ *  (hit reaction, breathing, knock-out); without it attack/cast sample the combat keys. Sprite replacement is data-driven. */
 function paintSprite(ctx,u,x,y,scale=2,animation={state:'idle',frame:0}){
   const state=animation.state||'idle',frame=animation.frame||0;
   const native=getImage(referenceSprite(u));
-  if(native){const pose=sampleCombatPose(state,animation.progress??0,animation.reduced),animated=animation.progress!==undefined&&['attack','cast'].includes(state),f=referenceFrame(u,animated?pose.spriteState:state,animated?pose.frame:frame),factor=scale*.8;ctx.save();ctx.imageSmoothingEnabled=false;if(animated){ctx.translate(x,y);ctx.rotate(pose.tilt*([2,3,4].includes(u.facing)?-1:1));ctx.scale(pose.sx,pose.sy);x=0;y=0;}if(state==='down')ctx.globalAlpha*=Math.max(0,1-frame/4);ctx.drawImage(native,f%6*96,Math.floor(f/6)*96,96,96,x-48*factor,y-84*factor,96*factor,96*factor);ctx.restore();return;}
+  if(native){let pose=animation.pose||null,drawState=state,drawFrame=frame;
+    if(!pose&&animation.progress!==undefined&&['attack','cast'].includes(state)){const c=sampleCombatPose(state,animation.progress,animation.reduced);pose={tilt:c.tilt*([2,3,4].includes(u.facing)?-1:1),sx:c.sx,sy:c.sy};drawState=c.spriteState;drawFrame=c.frame;}
+    const f=referenceFrame(u,drawState,drawFrame),factor=scale*.8;ctx.save();
+    if(pose){ctx.translate(x,y);ctx.rotate(pose.tilt||0);ctx.scale(pose.sx??1,pose.sy??1);x=0;y=0;}
+    if(state==='down'&&!animation.pose)ctx.globalAlpha*=Math.max(0,1-frame/4);
+    drawCell(ctx,native,f,x-48*factor,y-84*factor,96*factor);ctx.restore();return;}
   const custom=getImage(u.sprite);if(custom){const sheet=u.animation;if(sheet){const row=['idle','move','attack','cast','hit','down'].indexOf(state),count=[4,6,8,6,2,4][Math.max(0,row)],sx=(frame%count)*sheet.frameWidth,sy=Math.max(0,row)*sheet.frameHeight;ctx.drawImage(custom,sx,sy,sheet.frameWidth,sheet.frameHeight,x-12*scale,y-32*scale,24*scale,32*scale);}else{const fit=Math.min(32*scale/custom.height,32*scale/custom.width),h=custom.height*fit,w=custom.width*fit;ctx.drawImage(custom,x-w/2,y-h,w,h);}return;}
   if(state==='move')y-=Math.abs(Math.sin(frame*Math.PI/3))*2*scale;
   if(state==='attack')x+=Math.sin(frame/7*Math.PI)*5*scale;
@@ -1351,8 +1403,9 @@ class Renderer {
     if(t.terrain==='rock'){c.fillStyle='#667565';c.beginPath();c.moveTo(p.x-12,p.y+7);c.lineTo(p.x-10,p.y-5);c.lineTo(p.x,p.y-14);c.lineTo(p.x+12,p.y-6);c.lineTo(p.x+15,p.y+6);c.fill();c.fillStyle='#bcc3a7';c.beginPath();c.moveTo(p.x-10,p.y-5);c.lineTo(p.x,p.y-14);c.lineTo(p.x+12,p.y-6);c.lineTo(p.x,p.y);c.fill();}
   }
   stone(s,now){const t=this.battle.tiles.get(key(s)),p=this.point(t),c=this.ctx,col=s.owner===0?'#7dffb0':s.owner===1?'#ff6a55':'#d8e6f5';this.hex(p.x,p.y,31);c.fillStyle=s.owner===0?'#2fd27270':s.owner===1?'#ff3d2a70':'#ffffff12';c.fill();c.strokeStyle=s.owner===0?'#7dffb0':s.owner===1?'#ff6a55':'#d8e6f566';c.lineWidth=s.owner===null?1.2:3.2;c.stroke();const a=this.battle.active;if(a&&a.team===0&&a.hp>0&&key(a)===key(s)&&s.owner!==0&&!a.isDecoy){const pulse=this.reduced?1:.6+.4*Math.sin(now/220);c.save();c.globalAlpha=pulse;c.setLineDash([5,4]);this.hex(p.x,p.y,34);c.strokeStyle='#7dffb0';c.lineWidth=2.5;c.stroke();c.setLineDash([]);c.restore();}c.fillStyle='#374d49';c.beginPath();c.ellipse(p.x,p.y+4,13,7,0,0,TAU);c.fill();c.strokeStyle=col+'99';c.lineWidth=1;c.beginPath();c.ellipse(p.x,p.y,17,9,0,0,TAU);c.stroke();const bob=this.reduced?0:Math.sin(now/700+s.q)*2;c.shadowBlur=14;c.shadowColor=col;c.fillStyle=col;c.beginPath();c.moveTo(p.x,p.y-32+bob);c.lineTo(p.x+8,p.y-19+bob);c.lineTo(p.x,p.y-5+bob);c.lineTo(p.x-8,p.y-19+bob);c.closePath();c.fill();c.shadowBlur=0;c.fillStyle='#ffffff99';c.beginPath();c.moveTo(p.x,p.y-32+bob);c.lineTo(p.x,p.y-5+bob);c.lineTo(p.x-8,p.y-19+bob);c.closePath();c.fill();}
-  unit(u,now){const c=this.ctx,p=this.motion(u,now);const bob=this.reduced?0:Math.sin(now/450+u.id)*1.3;c.fillStyle='#172d2977';c.beginPath();c.ellipse(p.x,p.y+4,16,7,0,0,TAU);c.fill();c.strokeStyle=u.team===0?'#d2e6a0':'#e6a28e';c.lineWidth=2;c.beginPath();c.ellipse(p.x,p.y+3,15,6,0,0,TAU);c.stroke();const fx=this.effects.filter(e=>e.id===u.id&&e.start<=now&&now-e.start<(e.type==='damage'?220:e.duration)&&['damage','attack','spell','summon','move'].includes(e.type)).sort((a,b)=>b.start-a.start)[0];const state=fx?({damage:'hit',attack:'attack',spell:'cast',summon:'cast',move:'move'})[fx.type]:'idle',count=({idle:4,move:6,attack:8,cast:6,hit:2})[state];const frame=fx?state==='move'?Math.floor((now-fx.start)*this.speed/100)%6:Math.min(count-1,Math.floor((now-fx.start)/fx.duration*count)):Math.floor(now/220)%4;const {kx,ky}=this.bodyOffset(u,fx,state,p,now);c.save();if(!referenceSprite(u)&&[2,3,4].includes(u.facing)){c.translate((p.x+kx)*2,0);c.scale(-1,1);}paintSprite(c,p.moving?{...u,facing:direction(p.from,p.to)}:u,p.x+kx,p.y+2+bob+ky,1.65,{state,frame,progress:fx?(now-fx.start)/fx.duration:undefined,reduced:this.reduced});c.restore();if(state==='hit'&&now-fx.start<220)this.hitFlash(u,fx,p,kx,ky+bob,state,frame,now);if(u.master){c.fillStyle='#e6c886';c.font='13px Georgia';c.textAlign='center';c.fillText('♛',p.x,p.y-54+bob);}if(u.element!=='neutral'){c.fillStyle=ELEMENTS[u.element].color;c.font='10px system-ui';c.textAlign='center';c.fillText(ELEMENTS[u.element].glyph,p.x+20,p.y-19);}}
-  effect(e,now){if(e.type==='damage'||e.type==='heal')return;const c=this.ctx,progress=(now-e.start)/e.duration;let p=e.q!==undefined?this.point(this.battle.tiles.get(key(e))):null;c.globalAlpha=Math.max(0,1-progress);if(e.type==='down'){paintSprite(c,e.unit,p.x,p.y+2,1.65,{state:'down',frame:Math.min(3,Math.floor(progress*4))});}else if(e.type==='summon'||e.type==='capture'||e.type==='spell'){const color=e.type==='capture'?(e.team===0?'#7dffb0':'#ff6a55'):ELEMENTS[e.element]?.color||'#d6e5ad';c.strokeStyle=color;c.lineWidth=3;c.beginPath();c.ellipse(p.x,p.y,14+progress*60,8+progress*35,0,0,TAU);c.stroke();for(let i=0;i<8;i++){const a=i*TAU/8+progress*2;c.fillStyle=color;c.fillRect(p.x+Math.cos(a)*progress*45,p.y-20+Math.sin(a)*progress*35,3,3);}if(e.type==='capture'){c.font='bold 15px system-ui';c.textAlign='center';c.lineWidth=4;c.strokeStyle='#0b1712';const y=p.y-70-progress*18;c.strokeText(e.team===0?'◆ 점령!':'◆ 적 점령',p.x,y);c.fillStyle=color;c.fillText(e.team===0?'◆ 점령!':'◆ 적 점령',p.x,y);}}else if(e.type==='attack')this.attackFx(e,progress);c.globalAlpha=1;}
+  // Ground units breathe (foot-anchored squash); only fliers bob in the air. Walking frames follow distance, not time.
+  unit(u,now){const c=this.ctx,p=this.motion(u,now),flying=movementType(u)===4;const bob=this.reduced||!flying?0:Math.sin(now/450+u.id)*1.6;c.fillStyle='#172d2977';c.beginPath();c.ellipse(p.x,p.y+4,16,7,0,0,TAU);c.fill();c.strokeStyle=u.team===0?'#d2e6a0':'#e6a28e';c.lineWidth=2;c.beginPath();c.ellipse(p.x,p.y+3,15,6,0,0,TAU);c.stroke();const fx=this.effects.filter(e=>e.id===u.id&&e.start<=now&&now-e.start<(e.type==='damage'?HIT_TIMING.total/(this.speed||1):e.duration)&&['damage','attack','spell','summon','move'].includes(e.type)).sort((a,b)=>b.start-a.start)[0];const state=fx?({damage:'hit',attack:'attack',spell:'cast',summon:'cast',move:'move'})[fx.type]:'idle',count=({idle:4,move:6,attack:8,cast:6,hit:2})[state],native=!!referenceSprite(u);const frame=fx?state==='move'?(native?walkFrame(p.traveled??moveTravel(fx,now)):Math.floor((now-fx.start)*(this.speed||1)/100)):Math.min(count-1,Math.floor((now-fx.start)/fx.duration*count)):Math.floor(now/220)%4;const {kx,ky}=this.bodyOffset(u,fx,state,p,now),pose=this.bodyPose(u,fx,state,p,now,flying);c.save();if(!native&&[2,3,4].includes(u.facing)){c.translate((p.x+kx)*2,0);c.scale(-1,1);}const anim={state,frame,progress:fx?(now-fx.start)/fx.duration:undefined,reduced:this.reduced,pose};paintSprite(c,p.moving?{...u,facing:direction(p.from,p.to)}:u,p.x+kx,p.y+2+bob+ky,1.65,anim);c.restore();if(state==='hit'&&now-fx.start<220)this.hitFlash(u,fx,p,kx,ky+bob,anim,now);if(u.master){c.fillStyle='#e6c886';c.font='13px Georgia';c.textAlign='center';c.fillText('♛',p.x,p.y-54+bob);}if(u.element!=='neutral'){c.fillStyle=ELEMENTS[u.element].color;c.font='10px system-ui';c.textAlign='center';c.fillText(ELEMENTS[u.element].glyph,p.x+20,p.y-19);}}
+  effect(e,now){if(e.type==='damage'||e.type==='heal')return;const c=this.ctx,progress=(now-e.start)/e.duration;let p=e.q!==undefined?this.point(this.battle.tiles.get(key(e))):null;c.globalAlpha=Math.max(0,1-progress);if(e.type==='down'){c.globalAlpha=1;this.knockOut(e,p,progress);}else if(e.type==='summon'||e.type==='capture'||e.type==='spell'){const color=e.type==='capture'?(e.team===0?'#7dffb0':'#ff6a55'):ELEMENTS[e.element]?.color||'#d6e5ad';c.strokeStyle=color;c.lineWidth=3;c.beginPath();c.ellipse(p.x,p.y,14+progress*60,8+progress*35,0,0,TAU);c.stroke();for(let i=0;i<8;i++){const a=i*TAU/8+progress*2;c.fillStyle=color;c.fillRect(p.x+Math.cos(a)*progress*45,p.y-20+Math.sin(a)*progress*35,3,3);}if(e.type==='capture'){c.font='bold 15px system-ui';c.textAlign='center';c.lineWidth=4;c.strokeStyle='#0b1712';const y=p.y-70-progress*18;c.strokeText(e.team===0?'◆ 점령!':'◆ 적 점령',p.x,y);c.fillStyle=color;c.fillText(e.team===0?'◆ 점령!':'◆ 적 점령',p.x,y);}}else if(e.type==='attack')this.attackFx(e,progress);c.globalAlpha=1;}
   healthOverlay(now){
     const c=this.ctx,bounds={x:5,y:46,width:this.width-10,height:Math.max(0,this.height-122)};
     const units=this.battle.units.filter(u=>this.displayHp(u,now)>0&&this.battle.visibleUnit(u)&&this.battle.visible(this.motion(u,now).cell));
@@ -1397,11 +1450,23 @@ class Renderer {
   // Sprites have few frames, so motion is carried by smooth offsets: attack lunge toward the target, a hop per tile while walking.
   bodyOffset(u,fx,state,p,now){const kb=this.knockback(fx,state,p,now);if(this.reduced)return kb;let x=kb.kx,y=kb.ky;
     if((state==='attack'||state==='cast')&&fx){const pose=sampleCombatPose(state,(now-fx.start)/fx.duration,this.reduced);y+=pose.lift;if(fx.to){const b=this.point(this.battle.tiles?.get(key(fx.to))||{elevation:0,...fx.to}),dx=b.x-p.x,dy=b.y-p.y,len=Math.hypot(dx,dy)||1;x+=dx/len*pose.reach;y+=dy/len*pose.reach*.6;}}
-    const move=p.moving&&this.effects.find(e=>e.type==='move'&&e.id===u.id&&now<e.start+e.duration);if(move&&!p.to?.warp){const segments=Math.max(1,(move.path?.length||2)-1),phase=(Math.max(0,now-move.start)/move.duration*segments)%1;y-=Math.sin(phase*Math.PI)*4;}
+    const move=p.moving&&this.effects.find(e=>e.type==='move'&&e.id===u.id&&now<e.start+e.duration);if(move&&!p.to?.warp){const phase=(p.traveled??moveTravel(move,now))%1;y-=Math.sin(phase*Math.PI)*3;}
     return {kx:x,ky:y};}
   // Hit feedback is presentation only (damage numbers and rules are untouched); reduced motion keeps just the flash.
-  knockback(fx,state,p,now){if(state!=='hit'||this.reduced||!(fx.amount>0))return {kx:0,ky:0};const t=Math.min(1,(now-fx.start)/220),src=this.battle.units.find(x=>x.id===fx.sourceId);if(!src)return {kx:0,ky:0};const s=this.point(src),dx=p.x-s.x,dy=p.y-s.y,len=Math.hypot(dx,dy)||1,push=5*(1-t);return {kx:dx/len*push,ky:dy/len*push*.6};}
-  hitFlash(u,fx,p,kx,ky,state,frame,now){const c=this.ctx,t=(now-fx.start)/220;c.save();if(!referenceSprite(u)&&[2,3,4].includes(u.facing)){c.translate((p.x+kx)*2,0);c.scale(-1,1);}c.globalCompositeOperation='lighter';c.globalAlpha=.65*(1-t);paintSprite(c,u,p.x+kx,p.y+2+ky,1.65,{state,frame});c.restore();if(this.reduced||!(fx.amount>0))return;c.save();c.globalAlpha=1-t;c.strokeStyle=fx.hpAfter===0?'#ffd27a':'#fff4d6';c.lineWidth=2;c.lineCap='round';const r0=9+t*18,cy=p.y-20;c.beginPath();for(let i=0;i<8;i++){const a=i*Math.PI/4+.4;c.moveTo(p.x+Math.cos(a)*r0,cy+Math.sin(a)*r0);c.lineTo(p.x+Math.cos(a)*(r0+7),cy+Math.sin(a)*(r0+7));}c.stroke();c.restore();}
+  hitSource(fx,p){const src=this.battle.units.find(x=>x.id===fx.sourceId);if(!src)return null;const s=this.point(src),dx=p.x-s.x,dy=p.y-s.y,len=Math.hypot(dx,dy)||1;return {dx:dx/len,dy:dy/len};}
+  knockback(fx,state,p,now){if(state!=='hit'||this.reduced||!(fx.amount>0))return {kx:0,ky:0};const d=this.hitSource(fx,p);if(!d)return {kx:0,ky:0};const h=sampleHitPose((now-fx.start)*(this.speed||1)),push=h.push+h.shudder;return {kx:d.dx*push,ky:d.dy*push*.6};}
+  // Screen-space body transform: lean back from the blow when hit, breathe when standing (ground units only).
+  bodyPose(u,fx,state,p,now,flying=false){if(this.reduced)return null;
+    if(state==='hit'){if(!(fx?.amount>0))return null;const d=this.hitSource(fx,p),h=sampleHitPose((now-fx.start)*(this.speed||1));return {tilt:h.tilt*(d&&d.dx<0?-1:1),sx:h.sx,sy:h.sy};}
+    if(state==='idle'&&!flying){const s=Math.sin(now/430+u.id*1.7);return {tilt:0,sx:1-.008*s,sy:1+.018*s};}
+    return null;}
+  // Knock-out: white flash, fall backwards and sink, then dissolve into motes of the unit's element colour.
+  knockOut(e,p,progress){const c=this.ctx,d=sampleDownPose(progress,this.reduced),u=e.unit,side=[2,3,4].includes(u.facing)?1:-1,y=p.y+2+d.sink;
+    c.save();c.globalAlpha=Math.max(0,d.alpha);paintSprite(c,u,p.x,y,1.65,{state:'idle',frame:0,pose:{tilt:d.tilt*side,sx:d.sx,sy:d.sy}});
+    if(d.flash>0){c.globalCompositeOperation='lighter';c.globalAlpha=.8*d.flash;paintSprite(c,u,p.x,y,1.65,{state:'idle',frame:0,pose:{tilt:d.tilt*side,sx:d.sx,sy:d.sy}});c.globalCompositeOperation='source-over';}
+    if(d.dissolve>0){c.fillStyle=ELEMENTS[u.element]?.color||'#e8e2c4';for(let i=0;i<10;i++){const a=(i*137.5+(u.id||0)*31)%360*Math.PI/180,r=6+i%4*4;c.globalAlpha=Math.max(0,.9*(1-d.dissolve));c.fillRect(p.x+Math.cos(a)*r*(1+d.dissolve)-1.5,y-22+Math.sin(a)*r*.6-d.dissolve*(18+i%3*8),3,3);}}
+    c.restore();}
+  hitFlash(u,fx,p,kx,ky,anim,now){const c=this.ctx,t=(now-fx.start)/220;c.save();if(!referenceSprite(u)&&[2,3,4].includes(u.facing)){c.translate((p.x+kx)*2,0);c.scale(-1,1);}c.globalCompositeOperation='lighter';c.globalAlpha=.65*(1-t);paintSprite(c,u,p.x+kx,p.y+2+ky,1.65,anim);c.restore();if(this.reduced||!(fx.amount>0))return;c.save();c.globalAlpha=1-t;c.strokeStyle=fx.hpAfter===0?'#ffd27a':'#fff4d6';c.lineWidth=2;c.lineCap='round';const r0=9+t*18,cy=p.y-20;c.beginPath();for(let i=0;i<8;i++){const a=i*Math.PI/4+.4;c.moveTo(p.x+Math.cos(a)*r0,cy+Math.sin(a)*r0);c.lineTo(p.x+Math.cos(a)*(r0+7),cy+Math.sin(a)*(r0+7));}c.stroke();c.restore();}
   shake(now){if(this.reduced)return {x:0,y:0};let amp=0;for(const e of this.effects){if(e.type!=='damage'||!(e.amount>0)||now<e.start)continue;const t=(now-e.start)/240;if(t>=1)continue;const strength=e.hpAfter===0?5:e.amount>=5?3:0;amp=Math.max(amp,strength*(1-t));}if(!amp)return {x:0,y:0};return {x:Math.sin(now/17)*amp,y:Math.cos(now/23)*amp*.6};}
   // A unit on a mana stone hides the gem, so its owner colour is repeated as a small gem beside the head (pulsing while capture is pending).
   stoneBadges(units,now){const c=this.ctx;for(const u of units){if(u.isDecoy)continue;const s=this.battle.stones.find(s=>key(s)===key(u));if(!s)continue;const p=this.motion(u,now);if(p.moving)continue;const pending=s.owner!==u.team&&this.battle.active?.id===u.id&&u.team===0,col=pending&&Math.sin(now/260)>0?'#7dffb0':s.owner===0?'#7dffb0':s.owner===1?'#ff6a55':'#e4eef8',x=p.x-21,y=p.y-50;c.save();if(pending){c.font='bold 11px system-ui';c.textAlign='center';const w=62,ty=p.y-78;c.fillStyle='#0b1712e0';c.fillRect(p.x-w/2,ty-12,w,17);c.strokeStyle='#7dffb0';c.lineWidth=1;c.strokeRect(p.x-w/2+.5,ty-11.5,w-1,16);c.fillStyle='#b9ffd0';c.fillText('◆ 점령 예정',p.x,ty+1);}c.fillStyle='#0b1712cc';c.beginPath();c.arc(x,y,9,0,TAU);c.fill();c.shadowBlur=8;c.shadowColor=col;c.fillStyle=col;c.beginPath();c.moveTo(x,y-7);c.lineTo(x+5,y);c.lineTo(x,y+7);c.lineTo(x-5,y);c.closePath();c.fill();c.restore();}}
