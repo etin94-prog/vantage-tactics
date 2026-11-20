@@ -489,7 +489,7 @@
 .intro-head.compact{padding:18px 20px 6px;text-align:left}.intro-head.compact h2{font:600 21px "Malgun Gothic",system-ui;letter-spacing:0;margin:0 0 4px}.intro-head.compact p{margin:0;font-size:12px}
 body:has(#mobile-resources details[open]) .fps-meter{visibility:hidden}
 /* 행동 순서: 내 다음 차례 미리보기로 스크롤돼도 지금(NOW) 카드는 왼쪽에 붙어 보이게 */
-@media(max-width:960px){.order-list .order-card.current{position:sticky;left:0;z-index:2;box-shadow:inset 0 -3px #d1d9a3,6px 0 10px -4px #000a}}
+@media(max-width:960px){.order-list .order-card.current{position:sticky;left:0;z-index:2;box-shadow:inset 0 -3px #d1d9a3,6px 0 10px -4px #000a}.order-list.plan-tight .order-card.current{position:static}.order-list .order-card.planned strong{display:none}.order-list .order-card.planned small{margin-top:0;line-height:1.3}}
 /* 타이틀: 낮은 화면에서 가운데 정렬 때문에 위가 잘리지 않게(margin:auto 는 넘치면 위에서 시작) */
 #main-dialog[open]:has(.title-screen){align-items:flex-start}#main-dialog[open]:has(.title-screen) .title-screen{margin:auto}
 @media(max-height:680px){.title-logo{margin-bottom:12px}.title-logo .sigil{display:none}.title-logo h1{font-size:24px;letter-spacing:2px}.title-menu{gap:7px}.title-menu button{min-height:50px}.title-screen .difficulty-pick{margin:8px 0}}
@@ -537,6 +537,42 @@ body:has(#mobile-resources details[open]) .fps-meter{visibility:hidden}
   .mobile-dock .mobile-tabs button{font-size:11px;padding:4px 0}
   .toast{right:246px;left:12px;bottom:12px;transform:none;width:auto;max-width:none;font-size:12px}
 }
+/* Mobile refinement 1-3: stable controls, contextual information, input feedback. */
+.tactical-scroll{display:none}.view-preferences{display:grid;gap:6px}.view-preferences label{min-height:44px;display:flex;align-items:center;gap:8px}.view-preferences input{width:20px;height:20px}
+#action-feedback{margin:0;padding:8px 10px;border:1px solid #b99963;border-radius:8px;background:#302e20;color:#ffe4b4;font-size:12px;line-height:1.5}
+#action-feedback[hidden]{display:none}
+.action-btn{transition:background .12s,border-color .12s,transform .08s}.action-btn:active:not([aria-disabled="true"]){transform:translateY(1px) scale(.97)}
+@media(max-width:960px) and (orientation:portrait){
+  #mobile-action-slot{position:relative;height:56px;align-items:end}
+  #mobile-action-slot .action-btn{order:var(--mobile-order);min-height:48px}
+  #mobile-action-slot #action-bar{gap:8px}
+  #mobile-action-slot.expanded #action-bar{position:absolute;bottom:4px;left:0;width:calc(100% - 62px);z-index:12;padding:0;background:#20382d;border:0;border-radius:12px;box-shadow:0 -6px 20px #0007;gap:8px}
+  #mobile-action-slot.expanded .action-btn.mobile-primary{grid-row:2}
+  #mobile-action-slot.expanded .action-btn:not(.mobile-primary){grid-row:1}
+  #mobile-actions-more{grid-column:2;align-self:end;margin-bottom:4px}
+  .mobile-dock #action-feedback{position:absolute;bottom:100%;left:8px;right:8px;z-index:13;margin-bottom:8px}
+  .order-card small{font-size:10px}
+}
+@media(max-width:960px) and (orientation:landscape){
+  .mobile-dock{overflow:hidden;gap:4px}
+  .mobile-dock #mobile-unit-summary{order:0;min-height:44px;padding:0;flex:none}
+  .mobile-dock #mobile-action-slot{order:1;flex:none}
+  .mobile-dock #action-hint{order:2;flex:none;padding:2px 4px;max-height:38px;overflow:auto}
+  .mobile-dock .tactical-scroll{order:3;display:block;flex:1 1 0;min-height:44px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
+  .mobile-dock:has(.has-preview) #action-hint{display:none}
+  .tactical-forecast.has-preview h2{display:none}
+  .tactical-scroll .tactical-details{padding:0 8px}.tactical-scroll .mobile-tabs{margin-top:4px}
+  .mobile-dock .tactical-forecast{order:4;max-height:46%;overflow:auto;scrollbar-width:thin;padding:8px;flex:0 1 auto}
+  .tactical-forecast:not(.has-preview){padding:6px 8px}.tactical-forecast:not(.has-preview) h2{display:none}.tactical-forecast:not(.has-preview) br{display:contents}.tactical-forecast:not(.has-preview) br::after{content:' '}
+  .mobile-dock #action-feedback{order:5;flex:none;padding:5px 8px}
+  .tactical-forecast #target-preview:not([hidden]){display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .tactical-forecast #target-summary{grid-column:1/-1}
+  .tactical-forecast #target-confirm,.tactical-forecast #target-cancel{position:sticky;bottom:0;z-index:2;box-shadow:0 -5px 8px #172c23}
+  .mobile-dock #action-bar{gap:8px}
+}
+@media(prefers-reduced-motion:reduce){.action-btn{transition:none}.action-btn:active:not([aria-disabled="true"]){transform:none}}
+
+.forecast-empty{word-break:keep-all}
 </style></head>
 <body>
 <div class="app">
@@ -1217,6 +1253,14 @@ function eventVisible(battle,e){return e.q!==undefined?battle.visible(e):!e.from
 const PRESENTATION_SPEEDS=[.75,1,2,3];
 function presentationRate(value){return PRESENTATION_SPEEDS.includes(Number(value))?Number(value):1;}
 
+// Visual-only envelope, relative to the existing damage contact event in 1x ms.
+function sampleImpactFeedback(elapsed,reduced=false){
+  if(elapsed<0)return {scale:1,trail:0};
+  if(reduced)return {scale:1,trail:0};
+  const t=Math.max(0,Math.min(1,elapsed/220));
+  return {scale:1+.35*(1-t)*(1-t),trail:Math.max(0,1-Math.max(0,elapsed-120)/380)};
+}
+
 // Milliseconds at 1x. The contact point is shared by sprites, HP, VFX and audio.
 const COMBAT_TIMING={attack:960,attackImpact:360,cast:1000,castImpact:480,counter:1100,hit:320};
 const combatKeys={
@@ -1542,13 +1586,19 @@ class Renderer {
   }
   tile(t,now){const c=this.ctx,p=this.point(t);
     if(this.dangerArea?.has(key(t))){this.hex(p.x,p.y,33);c.fillStyle='#ff3b2a30';c.fill();c.strokeStyle='#ff7a6488';c.lineWidth=1.2;c.stroke();}if(this.highlight.has(key(t))){this.hex(p.x,p.y,35);c.fillStyle=this.mode==='summon'?'#a77dff6e':this.mode==='dismiss'?'#ff4a3a55':this.mode==='spell'||this.mode==='attack'?'#f39b7934':'#7fc8ff2e';c.fill();if(this.mode==='summon'){c.strokeStyle='#e6d4ffee';c.lineWidth=2.5;c.stroke();}}
-    if(this.rangeArea?.has(key(t))&&!this.highlight.has(key(t))){this.hex(p.x,p.y,35);c.fillStyle=this.rangeKind==='magic'?'#af7bf52a':'#ff8a5426';c.fill();}
+    if(this.rangeArea?.has(key(t))&&!this.highlight.has(key(t))){this.hex(p.x,p.y,35);c.fillStyle=this.quietRange?'#ff8a540a':this.rangeKind==='magic'?'#af7bf52a':'#ff8a5426';c.fill();}
     if(this.effectArea?.has(key(t))){this.hex(p.x,p.y,33);c.fillStyle='#ffd45a66';c.fill();c.strokeStyle='#ffe480';c.lineWidth=2.5;c.stroke();c.save();c.clip();c.strokeStyle='#ffe99a99';c.lineWidth=1;for(let x=-55;x<55;x+=11){c.beginPath();c.moveTo(p.x+x,p.y-25);c.lineTo(p.x+x+45,p.y+25);c.stroke();}c.restore();}
     if(this.targets.has(key(t))){this.hex(p.x,p.y,34);c.strokeStyle='#ffdfd0';c.lineWidth=2.3;c.stroke();c.beginPath();c.arc(p.x,p.y+15,4,0,Math.PI*2);c.moveTo(p.x-7,p.y+15);c.lineTo(p.x+7,p.y+15);c.moveTo(p.x,p.y+8);c.lineTo(p.x,p.y+22);c.stroke();}
     if(this.previewOrigin===key(t)){this.hex(p.x,p.y,30);c.strokeStyle='#89e0ff';c.lineWidth=3;c.stroke();c.font='bold 9px system-ui';c.textAlign='center';c.fillStyle='#e7faff';c.fillText('이동 예상',p.x,p.y-10);}
     if((this.hover&&key(this.hover)===key(t))||(this.focus&&key(this.focus)===key(t))){this.hex(p.x,p.y,36);c.strokeStyle='#f3eed4';c.lineWidth=2;c.stroke();}
     if(this.battle.active&&this.battle.visibleUnit(this.battle.active)&&key(this.battle.active)===key(t)){this.hex(p.x,p.y,34);c.strokeStyle=this.battle.active.team===0?'#dbe9a2':'#edaa92';c.lineWidth=2;c.stroke();c.fillStyle='#e0e7b233';c.fill();}
-    if(t.elevation>0){c.fillStyle='#27352999';c.fillRect(p.x+17,p.y+13,12,11);c.font='8px system-ui';c.textAlign='center';c.fillStyle='#e0e2bd';c.fillText(`${t.elevation}`,p.x+23,p.y+21);}
+    if(this.showAllHeights||this.heightContext?.has(key(t))){c.fillStyle='#27352999';c.fillRect(p.x+17,p.y+13,12,11);c.font='8px system-ui';c.textAlign='center';c.fillStyle='#e0e2bd';c.fillText(`${t.elevation}`,p.x+23,p.y+21);}
+  }
+  drawPreviewPath(){
+    const path=this.previewPath;if(!path||path.length<2)return;const c=this.ctx;
+    c.save();c.strokeStyle='#d9f4ff';c.lineWidth=2;c.setLineDash([4,4]);c.beginPath();
+    path.forEach((tile,i)=>{const p=this.point(tile);i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y);});c.stroke();c.setLineDash([]);
+    const end=this.point(path.at(-1));c.beginPath();c.arc(end.x,end.y,7,0,TAU);c.stroke();c.restore();
   }
   decoration(t){const c=this.ctx,p=this.point(t);if(this.battle.at(t)||this.battle.stones.some(s=>key(s)===key(t)))return;
     if(t.terrain==='forest'){const x=p.x+7,y=p.y-3;c.fillStyle='#243e3055';c.beginPath();c.ellipse(x,y+7,15,6,0,0,TAU);c.fill();c.fillStyle='#6f6550';c.fillRect(x-2,y-18,4,25);for(let j=0;j<3;j++){c.fillStyle=['#2d4f3c','#365b41','#456d49'][j];c.beginPath();c.moveTo(x,y-47+j*12);c.lineTo(x-17+j*3,y-17+j*11);c.lineTo(x+17-j*3,y-17+j*11);c.closePath();c.fill();}c.fillStyle='#84a96c88';c.fillRect(x-3,y-34,3,8);}
@@ -1568,14 +1618,14 @@ class Renderer {
       const p=this.screenMotion(u,now);if(p.x<0||p.x>this.width||p.y<0||p.y>this.height)continue;
       const rect=placeLabel({x:p.x,y:p.y+9*this.scale},36,17,occupied,bounds);if(!rect)continue;
       c.fillStyle='#101e19f2';c.fillRect(rect.x,rect.y,rect.width,rect.height);
-      const hp=this.displayHp(u,now);c.fillStyle=hp<=3?'#ffb6a0':u.team===0?'#e0f3b2':'#ffd0c2';c.font='bold 11px system-ui';c.fillText(`${hp}/${u.maxHp}`,rect.x+18,rect.y+12);
+      const hp=this.displayHp(u,now),hit=this.effects.filter(e=>e.id===u.id&&e.type==='damage'&&e.start<=now).at(-1),feedback=sampleImpactFeedback(hit?(now-hit.start)*(this.speed||1):500,this.reduced),trail=hit?hp+Math.max(0,hit.hpBefore-hp)*feedback.trail:hp;c.fillStyle='#ecedd4';c.fillRect(rect.x,rect.y+15,36*Math.min(1,trail/u.maxHp),2);c.fillStyle=u.team===0?'#b5e88b':'#f6a28e';c.fillRect(rect.x,rect.y+15,36*Math.min(1,hp/u.maxHp),2);c.fillStyle=hp<=3?'#ffb6a0':u.team===0?'#e0f3b2':'#ffd0c2';c.font='bold 11px system-ui';c.fillText(`${hp}/${u.maxHp}`,rect.x+18,rect.y+12);
     }
     const latest=new Map();for(const e of this.effects)if(e.start<=now&&['damage','heal'].includes(e.type))latest.set(e.id,e);
     for(const e of latest.values()){
       const tile=this.battle.tiles.get(key(e));if(!tile)continue;
       const u=this.battle.units.find(u=>u.id===e.id),p=u?this.screenMotion(u,now):this.screen(tile),progress=(now-e.start)/e.duration;
-      const text=e.type==='heal'?`+${e.amount}`:e.amount===0?'피해 없음':`${e.kind==='반격'?'반격 ':''}−${e.amount}`;
-      c.font='bold 17px system-ui';const width=Math.ceil(c.measureText(text).width)+12;
+      const text=e.type==='heal'?`+${e.amount}`:e.amount===0?'피해 없음':`${e.kind==='반격'?'반격 ':''}−${e.amount}${e.hpAfter===0?' · 처치':''}`;
+      const feedback=sampleImpactFeedback((now-e.start)*(this.speed||1),this.reduced||e.type==='heal'||e.amount===0);c.font='bold 23px system-ui';const width=Math.ceil(c.measureText(text).width)+12;c.font=`bold ${Math.round(17*feedback.scale)}px system-ui`;
       const rect=placeLabel({x:p.x,y:Math.max(bounds.y,p.y-65*this.scale)},width,24,occupied,bounds);if(!rect)continue;
       c.globalAlpha=Math.min(1,Math.max(0,(1-progress)*4));c.fillStyle='#101a17ed';c.fillRect(rect.x,rect.y,width,24);
       c.strokeStyle=e.kind==='반격'?'#ffce7580':'#eee3c880';c.lineWidth=1;c.beginPath();c.moveTo(rect.x+width/2,rect.y+24);c.lineTo(p.x,p.y-38*this.scale);c.stroke();
@@ -1605,7 +1655,7 @@ class Renderer {
     const move=p.moving&&this.effects.find(e=>e.type==='move'&&e.id===u.id&&now<e.start+e.duration);if(move&&!p.to?.warp){const phase=(p.traveled??moveTravel(move,now))%1;y-=Math.sin(phase*Math.PI)*3;}
     return {kx:x,ky:y};}
   // Hit feedback is presentation only (damage numbers and rules are untouched); reduced motion keeps just the flash.
-  hitSource(fx,p){const src=this.battle.units.find(x=>x.id===fx.sourceId);if(!src)return null;const s=this.point(src),dx=p.x-s.x,dy=p.y-s.y,len=Math.hypot(dx,dy)||1;return {dx:dx/len,dy:dy/len};}
+  hitSource(fx,p){const src=this.battle.units.find(x=>x.id===fx.sourceId);if(!src)return null;const s=this.point(this.battle.tiles?.get(key(src))||{elevation:0,...src}),dx=p.x-s.x,dy=p.y-s.y,len=Math.hypot(dx,dy)||1;return {dx:dx/len,dy:dy/len};}
   knockback(fx,state,p,now){if(state!=='hit'||this.reduced||!(fx.amount>0))return {kx:0,ky:0};const d=this.hitSource(fx,p);if(!d)return {kx:0,ky:0};const h=sampleHitPose((now-fx.start)*(this.speed||1)),push=h.push+h.shudder;return {kx:d.dx*push,ky:d.dy*push*.6};}
   // Screen-space body transform: lean back from the blow when hit, breathe when standing (ground units only).
   bodyPose(u,fx,state,p,now,flying=false){if(this.reduced)return null;
@@ -1650,7 +1700,7 @@ class Renderer {
   // Tiles are static per stage: sort once, and skip any whose sprite/decoration box is off screen.
   drawTiles(){if(this.tileCache?.stage!==this.battle.stage||this.tileCache.count!==this.battle.stage.tiles.length)this.tileCache={stage:this.battle.stage,count:this.battle.stage.tiles.length,tiles:[...this.battle.stage.tiles].sort((a,b)=>a.r-b.r||a.q-b.q),maxElevation:Math.max(0,...this.battle.stage.tiles.map(t=>t.baseElevation??t.elevation??0))};const k=this.scale,mx=60*k,top=110*k,bottom=(52+5*(Math.max(8,this.tileCache.maxElevation+4)))*k,w=this.width,h=this.height;return this.tileCache.tiles.filter(t=>{if(t.terrain==='void')return false;const p=this.point(t),x=p.x*k+this.pan.x,y=p.y*k+this.pan.y;return x>-mx&&x<w+mx&&y>-bottom&&y<h+top;});}
   draw(now){const elapsed=now-this.lastFrame;this.preserveFrames(now);this.lastFrame=now;const c=this.ctx;c.setTransform(this.dpr||1,0,0,this.dpr||1,0,0);c.clearRect(0,0,this.width,this.height);if(!this.battle)return;this.trackCamera(now,elapsed);for(const e of this.effects){if(e.start<=now&&!e.presented){e.presented=true;this.callbacks.effect?.(e,now-e.start<250);}}this.effects=this.effects.filter(e=>now-e.start<e.duration);if(this.playbackUntil&&now>=this.playbackUntil){this.playbackUntil=0;this.callbacks.complete?.();}c.save();const shake=this.shake(now);c.translate(this.pan.x+shake.x,this.pan.y+shake.y);c.scale(this.scale,this.scale);c.imageSmoothingEnabled=false;
-    const tiles=this.drawTiles();this.drawTerrain(tiles);for(const t of tiles)this.tile(t,now);if(this.mode!=='summon')this.outline(this.highlight,this.mode==='dismiss'?'#ff7a64':'#9fdcff');this.outline(this.rangeArea,this.rangeKind==='magic'?'#d8b7ff':'#ffb07a');
+    const tiles=this.drawTiles();this.heightContext=new Set();const near=[this.battle.active,this.hover,this.focus,this.battle.units.find(u=>u.id===this.selectedUnitId),this.battle.units.find(u=>u.id===this.aimId),this.previewOrigin&&this.battle.tiles.get(this.previewOrigin)].filter(Boolean);for(const t of near){if(!this.battle.visible(t))continue;for(const [dq,dr] of [[0,0],[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]])this.heightContext.add(`${t.q+dq},${t.r+dr}`);}this.drawTerrain(tiles);for(const t of tiles)this.tile(t,now);if(this.mode!=='summon')this.outline(this.highlight,this.mode==='dismiss'?'#ff7a64':'#9fdcff');if(!this.quietRange)this.outline(this.rangeArea,this.rangeKind==='magic'?'#d8b7ff':'#ffb07a');this.drawPreviewPath();
     for(const t of tiles){if(!this.battle.visible(t)){const p=this.point(t);this.hex(p.x,p.y);c.fillStyle='#10201ddb';c.fill();continue;}this.waterGleam(t,now);this.decoration(t);const s=this.battle.stones.find(s=>key(s)===key(t));if(s)this.stone(s,now);for(const pair of this.battle.stage.portals||[])if(pair.some(x=>key(x)===key(t))){const p=this.point(t);c.strokeStyle='#c2a4ee';c.lineWidth=2;c.beginPath();c.ellipse(p.x,p.y,20,11,0,0,TAU);c.stroke();}}
     const visibleUnits=this.battle.units.filter(u=>this.displayHp(u,now)>0&&this.battle.visibleUnit(u)&&this.battle.visible(this.motion(u,now).cell));
     visibleUnits.sort((a,b)=>this.motion(a,now).y-this.motion(b,now).y);for(const u of visibleUnits){this.activeHalo(u,now);this.unit(u,now);}this.stoneBadges(visibleUnits,now);
@@ -1832,9 +1882,9 @@ class GameHaptics {
 }
 
 // Presentation only: availability comes from the existing action buttons.
-function primaryMobileActions(items) {
+function primaryMobileActions(items,previous=null) {
   const choices=items.filter(item=>!['move','undo','wait'].includes(item.id));
-  const featured=choices.find(item=>item.active&&!item.disabled)||choices.find(item=>!item.disabled)||choices[0];
+  const featured=choices.find(item=>item.id===previous)||choices.find(item=>item.active&&!item.disabled)||choices.find(item=>!item.disabled)||choices[0];
   return [items.some(item=>item.id==='undo')?'undo':'move',featured?.id,'wait'].filter(Boolean);
 }
 // Move the existing controls, rather than maintaining a second battle UI.
@@ -1850,16 +1900,24 @@ function initMobileUI({onClose}) {
   const actionHome=actions.parentElement, resourceHome=resources.parentElement;
   const dock=find('.mobile-dock'),slot=find('#mobile-action-slot');
   const more=document.createElement('button');more.id='mobile-actions-more';more.textContent='더보기';more.setAttribute('aria-expanded','false');more.setAttribute('aria-controls','action-bar');slot.append(more);
-  const forecast=document.createElement('section');forecast.className='tactical-forecast';forecast.setAttribute('aria-label','행동 예측');forecast.innerHTML='<h2>행동 예측</h2><p class="forecast-empty">공격·마법 대상을 고르면<br>피해와 반격을 확인할 수 있습니다.</p>';
+  const forecast=document.createElement('section');forecast.className='tactical-forecast';forecast.setAttribute('aria-label','행동 예측');forecast.innerHTML='<h2>행동 예측</h2><p class="forecast-empty">공격·마법 대상을 선택하면 피해와 반격을 확인합니다.</p>';
   const details=document.createElement('details');details.className='tactical-details';details.innerHTML='<summary>선택 유닛 상세</summary>';
   slot.after(forecast,details);
+  const scroll=document.createElement('div');scroll.className='tactical-scroll';dock.append(scroll);
+  const tabs=find('.mobile-tabs'),tabsHome=document.createComment('tabs home');tabs.before(tabsHome);
+  const feedback=document.createElement('p');feedback.id='action-feedback';feedback.setAttribute('role','status');feedback.hidden=true;dock.append(feedback);
+  let actionContext=null,featured=null;
   const relocations=[['#target-preview',forecast],['#unit-panel',details],['#action-hint',dock]].map(([selector,target])=>{const node=find(selector),marker=document.createComment(selector+' home');node.before(marker);return {node,marker,target};});
   function refreshActions(){
     const buttons=[...actions.querySelectorAll('[data-action]')];
-    const primary=primaryMobileActions(buttons.map(button=>({id:button.dataset.action,disabled:button.getAttribute('aria-disabled')==='true',active:button.classList.contains('active')})));
-    buttons.forEach(button=>button.classList.toggle('mobile-primary',primary.includes(button.dataset.action)));
+    if(actionContext!==actions.dataset.context){actionContext=actions.dataset.context;featured=null;feedback.hidden=true;}
+    const primary=primaryMobileActions(buttons.map(button=>({id:button.dataset.action,disabled:button.getAttribute('aria-disabled')==='true',active:button.classList.contains('active')})),featured);
+    featured=primary[1];
+    buttons.forEach((button,i)=>{button.classList.toggle('mobile-primary',primary.includes(button.dataset.action));button.style.setProperty('--mobile-order',primary.includes(button.dataset.action)?primary.indexOf(button.dataset.action):i+3);});
   }
+  actions.addEventListener('click',event=>{const button=event.target.closest('[data-action]');if(!button)return;feedback.hidden=button.getAttribute('aria-disabled')!=='true';feedback.textContent=button.dataset.reason||'';if(!feedback.hidden){button.setAttribute('aria-describedby','action-feedback');return;}more.setAttribute('aria-expanded','false');more.textContent='더보기';slot.classList.remove('expanded');});
   more.onclick=()=>{const expanded=more.getAttribute('aria-expanded')!=='true';more.setAttribute('aria-expanded',String(expanded));more.textContent=expanded?'접기':'더보기';slot.classList.toggle('expanded',expanded);};
+  slot.addEventListener('keydown',event=>{if(event.key==='Escape'&&slot.classList.contains('expanded')){event.preventDefault();more.click();more.focus();}});
   new MutationObserver(refreshActions).observe(actions,{childList:true});
   new MutationObserver(()=>forecast.classList.toggle('has-preview',!find('#target-preview').hidden)).observe(find('#target-preview'),{attributes:true,attributeFilter:['hidden']});
   let mounted=[], opener=null;
@@ -1868,7 +1926,7 @@ function initMobileUI({onClose}) {
   function open(kind){
     if(!media.matches)return;
     close();opener=document.activeElement;
-    if(kind==='unit'&&landscape.matches){details.open=!details.open;(details.open?details:find('#mobile-unit-summary')).scrollIntoView({block:'nearest'});return;}
+    if(kind==='unit'&&landscape.matches){details.open=!details.open;scroll.scrollTop=details.open?details.offsetTop-scroll.offsetTop:0;return;}
     const definitions={unit:['유닛 상세',['#unit-panel']],summons:['정령 선택',['.summon-panel']],info:['전황과 기록',['.left-panel','.journal']],menu:['게임 메뉴',['#mobile-menu']]};
     const [title,selectors]=definitions[kind];
     find('#mobile-sheet-title').textContent=title;
@@ -1882,7 +1940,7 @@ function initMobileUI({onClose}) {
   sheet.addEventListener('click',event=>{if(event.target===sheet){const r=sheet.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)close();}});
   document.querySelectorAll('[data-mobile-panel]').forEach(button=>button.onclick=()=>open(button.dataset.mobilePanel));
   document.querySelectorAll('[data-menu-target]').forEach(button=>button.onclick=()=>{close();find('#'+button.dataset.menuTarget).click();});
-  function layout(){close();if(media.matches){find('.field-top').prepend(range);find('#mobile-unit-summary').after(report);slot.prepend(actions);find('#mobile-resource-slot').append(resources);}else{rangeHome.after(range);reportHome.prepend(report);actionHome.append(actions);resourceHome.append(resources);}for(const {node,marker,target} of relocations){if(node.id==='action-hint'?media.matches:landscape.matches)target.append(node);else marker.after(node);}refreshActions();}
+  function layout(){close();if(media.matches){find('.field-top').prepend(range);find('#mobile-unit-summary').after(report);slot.prepend(actions);find('#mobile-resource-slot').append(resources);}else{rangeHome.after(range);reportHome.prepend(report);actionHome.append(actions);resourceHome.append(resources);}for(const {node,marker,target} of relocations){if(node.id==='action-hint'?media.matches:landscape.matches)target.append(node);else marker.after(node);}if(landscape.matches){scroll.append(report,details,tabs);}else{forecast.after(details);tabsHome.after(tabs);}refreshActions();}
   media.addEventListener('change',layout);landscape.addEventListener('change',layout);layout();
   return {open,close,get active(){return media.matches;},get isOpen(){return sheet.open||find('#fullscreen-help').open;}};
 }
@@ -2000,13 +2058,22 @@ function hpLine(h){return `HP ${h.hpBefore} → <b>${h.hpAfter}</b>${h.hpAfter==
 function renderAttackPreview(f){const box=$('#target-preview'),main=f.hits.find(h=>h.id===f.targetId)||f.hits[0],others=f.hits.filter(h=>h!==main);box.hidden=false;box.classList.add('attack-preview');$('#target-summary').innerHTML=`<strong>공격 → ${esc(main?.name??'')}${f.advantage?' · <i class="tag">상성 우위</i>':''}${f.back?' · <i class="tag">측후방</i>':''}</strong><span class="forecast-row hit"><b class="dmg">−${main?.amount??0}</b> ${main?hpLine(main):''}</span>${others.length?`<span class="forecast-row">추가 피해 ${others.map(h=>`${esc(h.name)} −${h.amount}${h.hpAfter===0?' 처치':''}`).join(' · ')}</span>`:''}${battle?.counterattack||f.counter?`<span class="forecast-row counter">${f.counter?`반격 <b class="dmg">−${f.counter.amount}</b> ${hpLine(f.counter)}`:'반격 없음'}</span>`:''}<small>같은 적을 한 번 더 누르면 공격합니다.</small>`;const c=$('#target-confirm');c.textContent='공격 확정';c.disabled=false;placeForecast(box,[battle.active,battle.units.find(x=>x.id===f.targetId)]);}
 // Dock the forecast on whichever half leaves attacker and target visible; if neither does, pan them into the free band.
 function placeForecast(box,units){if(box.closest('.tactical-forecast')){renderOrder();return;}const ys=units.filter(Boolean).map(u=>renderer.screen(battle.tiles.get(key(u))).y);if(!ys.length)return;const H=renderer.height,h=box.offsetHeight,k=renderer.scale||1,top=Math.min(...ys)-72*k,bottom=Math.max(...ys)+34*k,bandTop=54+h+8,bandBottom=H-52-h-8;let atTop=false;if(bottom<=bandBottom)atTop=false;else if(top>=bandTop)atTop=true;else{atTop=(top+bottom)/2>H/2;const [from,to]=atTop?[bandTop,H-52]:[54,bandBottom];renderer.pan.y+=(from+to)/2-(top+bottom)/2;}box.classList.toggle('at-top',atTop);renderOrder();}
+// Display preferences only; battle legality and timing remain in the engine.
+const viewOptions=document.createElement('div');viewOptions.className='view-preferences';
+viewOptions.innerHTML='<label><input type="checkbox" id="all-heights"> 전체 높이 표시</label><label><input type="checkbox" id="quick-menu"> 유닛 옆 행동 메뉴</label>';
+$('#range-panel .range-options').append(viewOptions);
+renderer.showAllHeights=preferences.allHeights===true;
+$('#all-heights').checked=renderer.showAllHeights;
+$('#all-heights').onchange=e=>{renderer.showAllHeights=e.target.checked;preferences.allHeights=e.target.checked;write('preferences',preferences);};
+$('#quick-menu').checked=preferences.quickMenu===true;
+$('#quick-menu').onchange=e=>{preferences.quickMenu=e.target.checked;write('preferences',preferences);if(!e.target.checked)hideWheel();};
 function rangeInspection(){return $('#range-view').value!=='auto'||$('#range-subject').value==='selected';}
 function renderBattleInfo(){
   const minutes=battle.clockMinutes(),periodName=({morning:'아침',day:'낮',evening:'저녁',night:'밤'})[battle.period()],brightness=({0:'어두움',0.5:'흐림',1:'밝음'})[battle.brightness()],time=`${String(Math.floor(minutes/60)%24).padStart(2,'0')}:${String(minutes%60).padStart(2,'0')}`;
   $('#clock-label').innerHTML=`<span class="clock-time">${time} · ${periodName}</span><span class="clock-light">${esc(brightness)}${battle.stage.fixedBrightness!==undefined?'(고정)':''}</span>`;$('#present-time').innerHTML=`<strong>${time} · ${periodName}</strong><span>맵 ${brightness}${battle.stage.fixedBrightness!==undefined?' · 고정 명암':''}</span>`;
   $('#economy-countdown').textContent=`다음 정산 ${60-((minutes%60)+60)%60}분 · 게임 시간 60분마다`;
   const panels=[0,1].map(team=>{const master=battle.units.find(u=>u.master&&u.team===team),cap=battle.maxMana(team),values=[['current','현재 MP',battle.mana[team],`${battle.mana[team]} / ${cap}`],['income','정산 수입',battle.income(team),`+${battle.income(team)}`],['upkeep','정령 유지비',battle.upkeep(team),`−${battle.upkeep(team)}`]];return `<section class="mp-team ${team?'opponent':'player'}" aria-label="${team?'적군':'아군'} MP"><strong>${team?'적군':'아군'} · ${esc(master?.name)}</strong>${values.map(([id,label,value,text])=>`<div class="mp-line ${id}"><span>${label}</span><b>${text}</b><div class="mp-track" role="meter" aria-label="${team?'적군':'아군'} ${label}" aria-valuenow="${value}" aria-valuemin="0" aria-valuemax="${Math.max(cap,value)}"><i style="width:${Math.min(100,value/cap*100)}%"></i></div></div>`).join('')}<small>순변화 ${battle.income(team)-battle.upkeep(team)>=0?'+':''}${battle.income(team)-battle.upkeep(team)} MP</small></section>`;}).join('');
-  $('#mp-comparison').innerHTML=panels;$('#mobile-resources').innerHTML=`<details><summary><span class="mp-full">아군 MP ${battle.mana[0]}/${battle.maxMana(0)} · 적군 MP ${battle.mana[1]}/${battle.maxMana(1)}</span><span class="mp-short" aria-hidden="true"><i class="mp-gem">◆</i><span class="mp-num"><b>${battle.mana[0]}</b><small>/${battle.maxMana(0)}</small><span class="mp-bar"><span style="width:${Math.round(100*battle.mana[0]/Math.max(1,battle.maxMana(0)))}%"></span></span></span><small class="mp-next ${battle.income(0)-battle.upkeep(0)<0?'neg':''}">${battle.income(0)-battle.upkeep(0)>=0?'+':'−'}${Math.abs(battle.income(0)-battle.upkeep(0))}<br>${60-((battle.clockMinutes()%60)+60)%60}분</small><i class="mp-foe">적 MP ${battle.mana[1]}</i></span> <span class="mp-more">▾ <em>수입·유지비</em></span></summary><div class="mobile-mp-grid">${panels}</div></details>`;showManaDelta();
+  $('#mp-comparison').innerHTML=panels;$('#mobile-resources').innerHTML=`<details><summary><span class="mp-full">아군 MP ${battle.mana[0]}/${battle.maxMana(0)} · 적군 MP ${battle.mana[1]}/${battle.maxMana(1)}</span><span class="mp-short" aria-hidden="true"><i class="mp-gem">◆</i><span class="mp-num"><b>${battle.mana[0]}</b><small>/${battle.maxMana(0)}</small><span class="mp-bar"><span style="width:${Math.round(100*battle.mana[0]/Math.max(1,battle.maxMana(0)))}%"></span></span></span><small class="mp-next ${battle.income(0)-battle.upkeep(0)<0?'neg':''}">${battle.income(0)-battle.upkeep(0)>=0?'+':'−'}${Math.abs(battle.income(0)-battle.upkeep(0))}<br>${60-((battle.clockMinutes()%60)+60)%60}분 후</small><i class="mp-foe">적 MP ${battle.mana[1]}</i></span> <span class="mp-more">▾ <em>수입·유지비</em></span></summary><div class="mobile-mp-grid">${panels}</div></details>`;showManaDelta();
 }
 function renderStandingPlace(tile,unit){if(!tile)return;const reduction=100-originalTerrainPercent(tile),cost=unit?battle.terrainCost(unit)(tile,tile):null,stone=battle.stones.find(s=>key(s)===key(tile));
   const name=ruleTerrain(tile)===6?'부유 발판':TERRAIN[tile.terrain].name;
@@ -2023,16 +2090,16 @@ function modalHead(title,subtitle,eyebrow='VANTAGE TACTICS'){return `<div class=
 function save(manual=false){if(!battle)return;const ok=write('save',battle.serialize());if(ok)$('#save-status').textContent=`자동 저장 · ${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}`;if(manual)toast(ok?'현재 전투를 이 브라우저에 저장했습니다.':'저장 공간이 부족합니다.');}
 function start(stage=generateStage(0)){if(titlePending)leaveTitle();haptics.cancel();combatHits=[];combatHoldUntil=0;$('#combat-report').hidden=true;$('#combat-report-rows').innerHTML='';clearTimeout(resultTimer);pendingResult=null;clearAim();clearTimeout(aiTimer);aiBusy=false;masterId=MASTERS.some(m=>m.id===masterId)?masterId:'fighter';battle=new Battle(stage,masterId,{custom,difficulty:preferences.difficulty||'normal',counterattack:counterattackFor(),...(stage.custom?{unlocked:SUMMONS.map(s=>s.id),extraSpells:Object.keys(SPELLS).filter(id=>/^v2-(10|11|12|13|14|15)$/.test(id))}:campaignInventory(progress.cleared)),playerLevel:stage.custom?stage.playerMasterStart.level||1:playerLevel(progress.exp)});mode='move';selectedId=battle.activeId;resultShown=false;selectedStage=Math.max(0,(stage.id||1)-1);renderer.setBattle(battle);if(!preferences.bgmTrack)gameAudio.select(chooseTrack(stage.id)).catch(error=>toast(error.message));if(dialog.open)dialog.close();update();save();scheduleAI();showBriefing();}
 function highlights(){syncDanger();queueMicrotask(renderRangeChips);
-  renderer.mode=mode;renderer.highlight=new Set();renderer.targets=new Set();renderer.rangeArea=new Set();renderer.effectArea=new Set();renderer.previewOrigin=null;
+  renderer.mode=mode;renderer.highlight=new Set();renderer.targets=new Set();renderer.rangeArea=new Set();renderer.effectArea=new Set();renderer.previewOrigin=null;renderer.previewPath=[];
   const active=battle.active,u=$('#range-subject').value==='selected'?battle.units.find(x=>x.id===selectedId&&battle.visibleUnit(x)):active;if(!u||battle.winner!==null)return;
-  const view=$('#range-view').value,inspection=rangeInspection(),spells=battle.availableSpells(u),select=$('#range-spell');
+  renderer.selectedUnitId=selectedId;const view=$('#range-view').value,inspection=rangeInspection(),spells=battle.availableSpells(u),select=$('#range-spell');
   if(select.dataset.unit!==String(u.id)||select.dataset.ids!==spells.map(s=>s.id).join(',')){select.innerHTML=spells.map(s=>`<option value="${s.id}">${esc(s.name)} · MP ${s.cost}</option>`).join('');select.dataset.unit=String(u.id);select.dataset.ids=spells.map(s=>s.id).join(',');}
   const magic=['magic','move-magic'].includes(view)||view==='auto'&&['spell','heal'].includes(mode),spellId=inspection?select.value:mode==='heal'?spells.find(s=>s.kind==='heal')?.id:selectedSpell;
-  $('#range-spell-label').hidden=!magic;renderer.rangeKind=magic?'magic':'attack';
+  renderer.quietRange=!inspection&&mode==='move';$('#range-spell-label').hidden=!magic;renderer.rangeKind=magic?'magic':'attack';
   if(!inspection&&active.team!==0){$('#range-legend').textContent='상대 행동 중';return;}
   if(!inspection&&mode==='dismiss'){renderer.highlight=new Set(battle.living.filter(n=>battle.canDismiss(n.id)).map(key));$('#range-legend').textContent='빨간 칸 · 해산할 수 있는 아군 정령';return;}if(!inspection&&mode==='summon'){if(battle.canSummon(selectedSummon))renderer.highlight=new Set(battle.summonTiles(u,selectedSummon).map(key));$('#range-legend').textContent='보라 채움 · 소환 가능한 빈 칸';return;}
   areaModel=targetArea(battle,u,{mode:magic?'spell':inspection?'attack':mode,spellId,view:view.startsWith('move-')?view:'current',origin:!inspection&&mode==='move'?hoveredTile:null,target:aimedTile||hoveredTile});
-  renderer.highlight=areaModel.movement;renderer.rangeArea=areaModel.range;renderer.targets=areaModel.targets;renderer.effectArea=areaModel.effect;renderer.previewOrigin=areaModel.origin;
+  renderer.highlight=areaModel.movement;renderer.rangeArea=areaModel.range;renderer.targets=areaModel.targets;renderer.effectArea=areaModel.effect;renderer.previewOrigin=areaModel.origin;if(areaModel.origin){const paths=battle.reachable(u);let step=areaModel.origin;while(step){const tile=battle.tiles.get(step);if(tile)renderer.previewPath.unshift(tile);step=paths.parents.get(step);}}
   $('#range-legend').innerHTML=`${areaModel.movement.size?'<span class="area-move">▰ 이동</span>':''}<span class="${magic?'area-magic':'area-attack'}">⬡ ${magic?'마법':'공격'} 사거리</span><span class="area-target">⊕ 선택 가능 대상</span>${areaModel.effect.size?'<span class="area-effect">▨ 실제 효과 범위</span>':''}<small>${inspection?'관찰 전용 · 행동하려면 현재 행동/행동 유닛으로':areaModel.origin?'이 칸으로 이동했을 때의 사거리':'현재 위치 기준'}${magic&&spellId?' · '+esc(SPELLS[spellId].name):''}</small>`;
   if(aimedTile){$('#target-preview').hidden=false;$('#target-confirm').textContent='대상 확정 · 시전';$('#target-summary').innerHTML=`<strong>${esc(SPELLS[spellId]?.name)} · 대상 ${aimedTile.q}, ${aimedTile.r}</strong><span>${areaModel.victims.map(v=>`${v.friendly?'아군':'적군'} ${esc(v.name)}${v.amount===null?'':` ${SPELLS[spellId]?.kind==='heal'?'+':'−'}${v.amount} HP`}`).join(' · ')||'영향받는 유닛 없음'}</span>`;$('#target-confirm').disabled=inspection||!areaModel.targets.has(key(aimedTile))||battle.mana[u.team]<(SPELLS[spellId]?.cost??Infinity);}
 }
@@ -2061,7 +2128,7 @@ function currentActions(){return actions.map(a=>a[0]==='move'&&battle.canUndoMov
 // Whose turn: a banner + short pulse when one of my units starts acting, and a page-level state for the border glow.
 let announcedTurn=null,bannerTimer=null;
 function announceTurn(){const u=battle?.active,mine=u?.team===0&&battle.winner===null,app=$('.app');app.classList.toggle('turn-mine',!!mine&&!renderer.isPlaying());app.classList.toggle('turn-enemy',u?.team===1&&battle.winner===null);if(!mine||renderer.isPlaying()||aiBusy)return;const id=`${battle.turn}:${u.id}`;if(announcedTurn===id)return;const first=announcedTurn===null;announcedTurn=id;if(first)return;const b=$('#turn-banner');b.innerHTML=`<small>아군 행동</small><strong>내 차례</strong><span>${esc(u.name)}</span>`;b.classList.remove('hidden','show');void b.offsetWidth;b.classList.add('show');haptics.pulse(15);clearTimeout(bannerTimer);bannerTimer=setTimeout(()=>{b.classList.remove('show');b.classList.add('hidden');},1300);}
-function renderActions(){const u=battle.active,player=u?.team===0&&battle.winner===null&&!renderer.isPlaying(),spells=battle.availableSpells(),healing=spells.find(s=>s.kind==='heal');announceTurn();$('#action-bar').innerHTML=currentActions().map(([id,label,symbol,hotkey])=>{let disabled=!player;let reason=!player?(battle.winner!==null?'전투가 끝났습니다.':u?.team!==0?'상대 차례입니다.':'연출이 끝나면 고를 수 있습니다.'):'';
+function renderActions(){const u=battle.active,player=u?.team===0&&battle.winner===null&&!renderer.isPlaying(),spells=battle.availableSpells(),healing=spells.find(s=>s.kind==='heal');announceTurn();$('#action-bar').dataset.context=`${battle.turn}:${u?.id}:${battle.moved}:${player}`;$('#action-bar').innerHTML=currentActions().map(([id,label,symbol,hotkey])=>{let disabled=!player;let reason=!player?(battle.winner!==null?'전투가 끝났습니다.':u?.team!==0?'상대 차례입니다.':'연출이 끝나면 고를 수 있습니다.'):'';
  if(id==='move'){disabled||=battle.moved||battle.hasStatus(u,'root')||u?.isDecoy;reason||=battle.moved?'이번 차례에는 이미 이동했습니다.':battle.hasStatus(u,'root')?'속박 상태라 이동할 수 없습니다.':u?.isDecoy?'분신은 이동할 수 없습니다.':'';}
  if(id==='attack'&&!disabled&&u&&!battle.living.some(t=>battle.canAttack(u,t))){disabled=true;reason=u.healerOnly?'이 유닛은 공격하지 않습니다.':battle.moved?'이 자리에서 닿는 적이 없습니다.':'사거리 안에 적이 없습니다 · 먼저 이동하세요.';}
  if(id==='summon'){disabled||=!u?.master||battle.hasStatus(u,'silence');reason||=!u?.master?'정령 소환은 소환사만 할 수 있습니다.':battle.hasStatus(u,'silence')?'침묵 상태라 소환할 수 없습니다.':'';}
@@ -2069,10 +2136,10 @@ function renderActions(){const u=battle.active,player=u?.team===0&&battle.winner
  if(id==='heal'){disabled||=!healing||battle.mana[0]<healing?.cost||battle.hasStatus(u,'silence');reason||=!healing?'이 유닛은 치유 마법이 없습니다.':battle.mana[0]<healing.cost?`MP가 부족합니다 (필요 ◆${healing.cost}).`:battle.hasStatus(u,'silence')?'침묵 상태입니다.':'';}
  const delay=u?battle.actionDelay(u,id==='heal'?'spell':id==='move'?'move':id):0;
  return `<button class="action-btn ${mode===id?'active':''}" data-action="${id}" ${disabled?`aria-disabled="true" data-reason="${esc(reason||'지금은 사용할 수 없습니다.')}"`:''} aria-label="${label} (${hotkey})" title="${id==='undo'?'이동 전 위치·방향 복원 · 시간 소비 없음':`행동 후 OA +${delay}`}"><kbd>${hotkey}</kbd><span class="symbol">${symbol}</span><span>${label}</span></button>`;}).join('');$('#action-bar').querySelectorAll('button').forEach(btn=>btn.onclick=()=>setMode(btn.dataset.action));renderOrder();const spell=SPELLS[selectedSpell],hints={move:'파란 타일로 이동 · 이동 후 공격·마법·소환 가능',attack:battle?.counterattack?'붉은 테두리의 적 선택 · 근접 정면·측면은 반격 주의':'붉은 테두리의 적 선택 · 측후방이면 피해 증가',summon:`${displayDef(SUMMONS.find(s=>s.id===selectedSummon)).name} · 소환 MP ${SUMMONS.find(s=>s.id===selectedSummon).cost} / 보유 ${battle.mana[0]} · 소환 후 ${battle.mana[0]-SUMMONS.find(s=>s.id===selectedSummon).cost} MP · 빛나는 빈 타일 선택`,spell:`${spell?.name||'마법'} · MP ${spell?.cost||0} · 사거리 ${spell?.range||'자신'} · 대상 선택`,heal:`${healing?.name||'치유'} · 회복 ${healing?.amount||0} · MP ${healing?.cost||0}`};hints.dismiss='해산할 아군 정령을 두 번 누르세요 · MP 환급 없음';const summonDef=SUMMONS.find(s=>s.id===selectedSummon),shortHints={dismiss:'해산할 정령을 두 번 누르기 · MP 환급 없음',move:battle.moved?'이동 완료 · 아래에서 행동 또는 대기 선택':'파란 칸으로 이동 · 아래에서 행동 선택',attack:'붉은 테두리 적 선택 → 예측 확인',summon:`${displayDef(summonDef).name} · MP ${summonDef.cost} → 남는 ${battle.mana[0]-summonDef.cost} · 보라 칸 선택`,spell:`${spell?.name||'마법'} · MP ${spell?.cost||0} · 대상 선택`,heal:hints.heal};$('#action-hint').innerHTML=renderer.isPlaying()?'이동 · 전투 연출 중…':!player?(battle.winner!==null?'전투가 종료되었습니다.':'상대가 전술을 결정하고 있습니다…'):`<span class="hint-who">내 차례 · ${esc(u.name)} — </span><span class="hint-long">${esc(hints[mode]||'다음 행동을 선택하세요')}</span><span class="hint-short">${esc(shortHints[mode]||'다음 행동을 선택하세요')}</span>${battle.canUndoMove()?'<span class="hint-undo"> · 확정 전 이동 취소(Z) 가능</span>':''}`;}
-function setMode(next){if(renderer.isPlaying())return;observing=false;clearAim();$('#range-view').value='auto';$('#range-subject').value='active';if(!battle.active||battle.active.team!==0||battle.winner!==null){toast(battle.winner!==null?'전투가 끝났습니다.':'상대 차례입니다.');return;}const button=$(`[data-action="${next}"]`);if(button?.getAttribute('aria-disabled')==='true'){toast(button.dataset.reason||'현재 사용할 수 없는 행동입니다.');return;}hideWheel();hideFacingPicker();hideSpellPicker();if(next==='undo'){mode='move';renderer.effects=[];act(()=>battle.undoMove());return;}if(next==='wait'){showFacingPicker();return;}if(next==='dismiss'){if(!battle.living.some(n=>battle.canDismiss(n.id))){toast('해산할 수 있는 아군 정령이 없습니다.');return;}mode='dismiss';pendingDismiss=null;renderActions();highlights();toast('해산할 아군 정령을 고르세요 · MP는 돌려받지 못합니다');return;}if(next==='summon'){if(mobileUI.active)mobileUI.open('summons');else chooseSummon(selectedSummon);return;}if(next==='spell'){showSpellbook();return;}mode=next;renderActions();renderSummons();highlights();}
+function setMode(next){if(renderer.isPlaying())return;observing=false;clearAim();$('#range-view').value='auto';$('#range-subject').value='active';if(!battle.active||battle.active.team!==0||battle.winner!==null){toast(battle.winner!==null?'전투가 끝났습니다.':'상대 차례입니다.');return;}const button=$(`[data-action="${next}"]`);if(button?.getAttribute('aria-disabled')==='true'){if(!mobileUI.active)toast(button.dataset.reason||'현재 사용할 수 없는 행동입니다.');return;}hideWheel();hideFacingPicker();hideSpellPicker();if(next==='undo'){mode='move';renderer.effects=[];act(()=>battle.undoMove());return;}if(next==='wait'){showFacingPicker();return;}if(next==='dismiss'){if(!battle.living.some(n=>battle.canDismiss(n.id))){toast('해산할 수 있는 아군 정령이 없습니다.');return;}mode='dismiss';pendingDismiss=null;renderActions();highlights();toast('해산할 아군 정령을 고르세요 · MP는 돌려받지 못합니다');return;}if(next==='summon'){if(mobileUI.active)mobileUI.open('summons');else chooseSummon(selectedSummon);return;}if(next==='spell'){showSpellbook();return;}mode=next;renderActions();renderSummons();highlights();}
 function showSpellbook(){if(mobileUI.active){showSpellPicker();return;}const u=battle.active,list=battle.availableSpells();showModal(`${modalHead('마법과 전용 기술',`${esc(u.name)} · 보유 마나 ${battle.mana[0]}`,'마법서')}<div class="modal-body spell-grid">${list.map(s=>`<button class="spell-card" data-spell="${s.id}" ${battle.mana[0]<s.cost?'disabled':''}><strong>${esc(s.name)}</strong><span>◈ ${s.cost} · ${s.allAllies?'아군 정령 전체':s.range?`사거리 ${s.range}`:'자신'}${s.radius?` · 범위 ${s.radius}링`:''}</span><small>${s.kind==='heal'?`HP ${battle.healing(u,s)} 회복`:s.status?`${STATUS_NAMES[s.status]} · ${battle.statusDuration(u,s)||s.duration}분`:({cleanse:'동결·석화·상태이상 해제',tide:'수위 변경 · 120분',damage:s.friendlyFire?'범위 공격 · 아군도 피해':'공격 마법',blink:'빈 타일로 순간이동',command:'아군 정령 OA 40% 단축',trap:'2턴 속박 덫 설치',decoy:'HP 1 분신 소환',charm:'정령 1회 행동 조종',dispel:'강화 효과 해제'})[s.kind]||'전용 기술'}</small></button>`).join('')}</div><div class="modal-footer"><p>회색 기술은 마나가 부족합니다. 시전 후 턴이 종료됩니다.</p></div>`);content.querySelectorAll('[data-spell]').forEach(btn=>btn.onclick=()=>{selectedSpell=btn.dataset.spell;dialog.close();mode='spell';renderActions();highlights();if(SPELLS[selectedSpell].range===0)toast('자신의 타일을 선택해 시전하세요.');});}
 function hideWheel(){$('#smart-wheel')?.remove();}
-function showWheel(u){hideWheel();const cv=$('#battle-canvas'),W=renderer.width||cv.clientWidth,H=renderer.height||cv.clientHeight,point=renderer.screen(battle.tiles.get(key(u))),gap=34*renderer.scale+10,right=point.x<W/2,el=document.createElement('div');el.id='smart-wheel';el.className=`smart-wheel command-menu ${right?'at-right':'at-left'}`;el.style.left=`${right?Math.max(8,Math.min(point.x+gap,W-150)):Math.min(W-8,Math.max(point.x-gap,150))}px`;el.style.top=`${Math.max(70,Math.min(point.y-20*renderer.scale,H-120))}px`;el.innerHTML=currentActions().filter(([id])=>$(`[data-action="${id}"]`)?.getAttribute('aria-disabled')!=='true').map(([id,label,symbol])=>`<button data-wheel="${id}">${symbol}<small>${label}</small></button>`).join('')+(u.master&&battle.living.some(n=>battle.canDismiss(n.id))?'<button data-wheel="dismiss" class="danger">✕<small>해산</small></button>':'');$('.battlefield').append(el);el.querySelectorAll('button').forEach(btn=>btn.onclick=()=>setMode(btn.dataset.wheel));}
+function showWheel(u){hideWheel();if(mobileUI.active&&!preferences.quickMenu){$('#action-hint').textContent='아래 행동 버튼을 선택하세요 · 이동 취소도 가능합니다';return;}const cv=$('#battle-canvas'),W=renderer.width||cv.clientWidth,H=renderer.height||cv.clientHeight,point=renderer.screen(battle.tiles.get(key(u))),gap=34*renderer.scale+10,right=point.x<W/2,el=document.createElement('div');el.id='smart-wheel';el.className=`smart-wheel command-menu ${right?'at-right':'at-left'}`;el.style.left=`${right?Math.max(8,Math.min(point.x+gap,W-150)):Math.min(W-8,Math.max(point.x-gap,150))}px`;el.style.top=`${Math.max(70,Math.min(point.y-20*renderer.scale,H-120))}px`;el.innerHTML=currentActions().filter(([id])=>$(`[data-action="${id}"]`)?.getAttribute('aria-disabled')!=='true').map(([id,label,symbol])=>`<button data-wheel="${id}">${symbol}<small>${label}</small></button>`).join('')+(u.master&&battle.living.some(n=>battle.canDismiss(n.id))?'<button data-wheel="dismiss" class="danger">✕<small>해산</small></button>':'');$('.battlefield').append(el);el.querySelectorAll('button').forEach(btn=>btn.onclick=()=>setMode(btn.dataset.wheel));}
 function chooseSummon(id){if(renderer.isPlaying())return;clearAim();const u=battle.active;if(u?.team!==0||!u.master||battle.winner!==null){toast('아군 소환사의 턴에 정령을 소환할 수 있습니다.');return;}if(!battle.unlocked.includes(id)){toast(`🔒 아직 얻지 못한 정령입니다 · ${unlockText(id)}`);return;}if(!battle.canSummon(id)){toast(battle.living.filter(u=>u.team===0&&!u.master).length>=6?'정령은 최대 6명까지 소환할 수 있습니다.':'소환할 마나가 부족합니다.');return;}mobileUI.close();selectedSummon=id;mode='summon';renderActions();renderSummons();highlights();}
 function act(fn){if(renderer.isPlaying())return false;if(battle.active?.team!==0||aiBusy||battle.winner!==null)return;clearAim();const before=battle.activeId,ok=fn();if(!ok)return false;selectedId=battle.activeId;if(before!==battle.activeId||battle.winner!==null)mode='move';else if(battle.moved)mode=battle.living.some(t=>battle.canAttack(battle.active,t))?'attack':'move';$('#tile-tooltip').classList.add('hidden');update();save();scheduleAI();return true;}
 function onTile(tile){releaseHold();hideFacingPicker();hideSpellPicker();if(renderer.isPlaying())return;if(!tile||dialog.open||mobileUI.isOpen)return;hideWheel();const target=battle.at(tile),seen=target&&battle.visibleUnit(target)?target:null,player=battle.active?.team===0&&battle.winner===null,aimable=seen&&player&&seen.team===1&&battle.canAttack(battle.active,seen)&&['move','attack'].includes(mode);if(observing){exitObserve();if(seen&&seen.id!==battle.activeId&&!aimable){observeUnit(seen);return;}if(!seen&&!player)return;}else if(rangeInspection()){if(seen){selectedId=seen.id;renderUnit();}highlights();return;}if(seen&&seen.id===battle.activeId&&seen.team===0&&player){showWheel(seen);return;}if(seen&&!aimable&&(!player||['move','attack'].includes(mode))){observeUnit(seen);return;}if(target&&battle.visibleUnit(target)){selectedId=target.id;renderUnit();}if(battle.active?.team!==0||battle.winner!==null)return;
@@ -2219,7 +2286,11 @@ function showFacingPicker(){hideFacingPicker();const u=battle.active;if(!u||u.te
 function renderRangeChips(){for(const id of ['range-subject','range-view','range-spell']){const sel=$('#'+id);if(!sel)continue;let box=sel.nextElementSibling;if(!box?.classList.contains('chips')){box=document.createElement('div');box.className='chips';sel.after(box);}box.innerHTML=[...sel.options].map(o=>`<button type="button" data-v="${esc(o.value)}" aria-pressed="${o.value===sel.value}">${esc(o.text)}</button>`).join('');box.querySelectorAll('button').forEach(b=>b.onclick=()=>{sel.value=b.dataset.v;sel.dispatchEvent(new Event('change'));renderRangeChips();});}}
 // A1: the action being considered decides where the active unit lands in the turn order (engine.actionDelay, nothing assumed).
 function plannedAction(){const u=battle?.active;if(!u||u.team!==0||battle.winner!==null||renderer.isPlaying())return null;if(aimedAttack!==null||mode==='attack')return {action:'attack',label:'공격'};if(mode==='summon')return {action:'summon',label:'소환'};if(mode==='spell')return {action:'spell',spell:SPELLS[selectedSpell],label:'마법'};if(mode==='heal')return {action:'spell',spell:battle.availableSpells().find(s=>s.kind==='heal'),label:'치유'};return {action:'wait',label:'대기'};}
-function renderOrder(){if(!battle)return;const plan=plannedAction(),entries=battle.order(8,plan).filter(entry=>battle.visibleUnit(entry.unit)),now=entries.findIndex(e=>e.id===battle.activeId);$('#order-list').innerHTML=entries.map((entry,i)=>{const current=entry.id===battle.activeId&&i===now,ghost=!!entry.planned;return `<button class="order-card ${current?'current':''} ${entry.unit.team===1?'enemy':''} ${ghost&&plan?'planned':''}" data-unit="${entry.id}" aria-label="${esc(entry.unit.name)} ${entry.unit.team===0?'아군':'적군'} 행동 시간 ${entry.time}${ghost&&plan?` · ${plan.label} 후 다음 차례`:''}"><span class="order-number">${i+1}</span><img src="${portrait(entry.unit)}" alt=""><span><strong>${esc(entry.unit.name)}</strong><small>${current?'NOW':ghost&&plan?`${plan.label} +${entry.time-battle.time}`:`+${entry.time-battle.time}`}</small></span></button>`;}).join('');const ghost=$('#order-list .planned');if(ghost&&mobileUI.active)ghost.scrollIntoView({block:'nearest',inline:'nearest',behavior:renderer.reduced?'auto':'smooth'});}
+function renderOrder(){if(!battle)return;const plan=plannedAction(),entries=battle.order(8,plan).filter(entry=>battle.visibleUnit(entry.unit)),now=entries.findIndex(e=>e.id===battle.activeId);$('#order-list').innerHTML=entries.map((entry,i)=>{const current=entry.id===battle.activeId&&i===now,ghost=!!entry.planned;return `<button class="order-card ${current?'current':''} ${entry.unit.team===1?'enemy':''} ${ghost&&plan?'planned':''}" data-unit="${entry.id}" aria-label="${esc(entry.unit.name)} ${entry.unit.team===0?'아군':'적군'} 행동 시간 ${entry.time}${ghost&&plan?` · ${plan.label} 후 다음 차례`:''}"><span class="order-number">${i+1}</span><img src="${portrait(entry.unit)}" alt=""><span><strong>${esc(entry.unit.name)}</strong><small>${current?'현재':ghost&&plan?`${plan.label} 후 ${entry.time-battle.time}분`:`+${entry.time-battle.time}`}</small></span></button>`;}).join('');const list=$('#order-list'),ghost=list.querySelector('.planned');list.classList.remove('plan-tight');if(ghost&&mobileUI.active)revealPlanned(list,ghost,list.dataset.plan!==ghost.textContent);list.dataset.plan=ghost?.textContent||'';}
+// The current card is sticky on narrow screens: keep the planned card beside it, never behind it.
+// When the strip cannot hold both, the current card stops sticking so the planned time stays readable.
+addEventListener('resize',()=>requestAnimationFrame(()=>{const list=$('#order-list'),ghost=list?.querySelector('.planned');if(ghost&&mobileUI.active)revealPlanned(list,ghost,false);else list?.classList.remove('plan-tight');}));
+function revealPlanned(list,ghost,changed){list.classList.remove('plan-tight');const cur=list.querySelector('.order-card.current'),gap=parseFloat(getComputedStyle(list).columnGap)||0,sticky=cur&&getComputedStyle(cur).position==='sticky'?cur.offsetWidth+gap:0,tight=!!sticky&&list.clientWidth<sticky+ghost.offsetWidth;list.classList.toggle('plan-tight',tight);const left=ghost.getBoundingClientRect().left-list.getBoundingClientRect().left+list.scrollLeft,min=left+ghost.offsetWidth-list.clientWidth,max=left-(tight?0:sticky),target=min<=0?0:max;if(Math.abs(target-list.scrollLeft)>0.5)list.scrollTo({left:target,behavior:renderer.reduced||!changed?'auto':'smooth'});}
 // A3: element advantage against the enemies on the field (same beats table the damage uses).
 function matchBadge(element){const foes=battle.living.filter(u=>u.team===1&&battle.visibleUnit(u)),good=foes.filter(f=>ELEMENTS[element]?.beats===f.element),bad=foes.filter(f=>ELEMENTS[f.element]?.beats===element),name=list=>`${esc(list[0].name)}${list.length>1?` 외 ${list.length-1}`:''}`;return good.length?`<small class="match good">▲ 유리 · ${name(good)}</small>`:bad.length?`<small class="match bad">▼ 불리 · ${name(bad)}</small>`:'';}
 function elementLine(u){const el=ELEMENTS[u.element],a=battle.active;if(!el)return '';let rel='';if(a&&a.team!==u.team&&a.team===0){rel=ELEMENTS[a.element]?.beats===u.element?' · <b class="adv">내가 유리</b>':ELEMENTS[u.element]?.beats===a.element?' · <b class="dis">상대가 유리</b>':'';}return `<span style="color:${el.color}">${el.glyph} ${el.name}</span>${rel}<br>`;}
